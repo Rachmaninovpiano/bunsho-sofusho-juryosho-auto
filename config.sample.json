@@ -1,0 +1,6 @@
+{
+  "officeName": "○○法律事務所",
+  "lawyerNames": ["山田", "山田太郎"],
+  "faxNumbers": ["03-1234-5678"],
+  "port": 3000
+}

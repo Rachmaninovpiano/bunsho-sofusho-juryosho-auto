@@ -1,0 +1,34 @@
+# 個人情報・設定
+config.json
+
+# 印鑑画像（個人の印影）
+seal/
+
+# Node.js
+node_modules/
+
+# 出力・一時ファイル
+output/
+tmp/
+temp_*/
+nul
+
+# サンプルPDF・個人文書
+*.pdf
+stamp.bmp
+
+# VBSスクリプト
+*.vbs
+
+# テンプレート（個人文書）
+template/
+
+# ログ
+system/last_run.log
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Claude Code
+.claude/
