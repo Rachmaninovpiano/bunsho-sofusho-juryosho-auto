@@ -676,6 +676,20 @@
   // handleFileの中でuploadFileが呼ばれるので、uploadFileをオーバーライド
   // uploadFileはlet/constで宣言されているのでそのまま使う
 
+  // ===== 起動時に設定を読み込み（事務所名・デフォルト署名者）=====
+  (async function loadConfig() {
+    try {
+      const res = await fetch('/api/config');
+      if (!res.ok) return;
+      const cfg = await res.json();
+      const subtitle = $('#officeSubtitle');
+      if (subtitle && cfg.officeName) subtitle.textContent = cfg.officeName;
+      if (cfg.defaultSignerName && receiptSignerName && !receiptSignerName.value) {
+        receiptSignerName.value = cfg.defaultSignerName;
+      }
+    } catch (e) { /* ignore */ }
+  })();
+
   // ===== ページ離脱前の確認（確認画面の時のみ） =====
   window.addEventListener('beforeunload', (e) => {
     if (currentState === 'confirm' || currentState === 'receipt-confirm') {

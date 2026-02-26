@@ -259,7 +259,15 @@ async function handleReceiptGenerate(req, res) {
 
     // フォームデータからオプションを取得
     const signerTitle = fields.signerTitle?.[0] || '被告訴訟代理人';
-    const signerName = fields.signerName?.[0] || '大元和貴';
+    // config.jsonのlawyerNames最後の要素（フルネーム）をデフォルトにする
+    const cfgLawyers = (() => {
+      try {
+        const c = JSON.parse(fs.readFileSync(path.join(BASE_DIR, 'config.json'), 'utf-8'));
+        return c.lawyerNames || [];
+      } catch (e) { return []; }
+    })();
+    const defaultSignerName = cfgLawyers.length > 0 ? cfgLawyers[cfgLawyers.length - 1] : '山田太郎';
+    const signerName = fields.signerName?.[0] || defaultSignerName;
     const receiptDate = fields.receiptDate?.[0] || undefined; // undefinedなら今日
 
     console.log(`[Receipt] 署名: ${signerTitle} ${signerName}`);
@@ -347,7 +355,18 @@ async function handleRequest(req, res) {
   }
 
   try {
-    if (req.method === 'POST' && pathname === '/api/upload') {
+    if (req.method === 'GET' && pathname === '/api/config') {
+      // クライアントに公開して良い設定のみ返す
+      let officeName = '';
+      let defaultSignerName = '';
+      try {
+        const c = JSON.parse(fs.readFileSync(path.join(BASE_DIR, 'config.json'), 'utf-8'));
+        officeName = c.officeName || '';
+        const names = c.lawyerNames || [];
+        defaultSignerName = names.length > 0 ? names[names.length - 1] : '';
+      } catch (e) { /* ignore */ }
+      sendJSON(res, 200, { officeName, defaultSignerName });
+    } else if (req.method === 'POST' && pathname === '/api/upload') {
       await handleUpload(req, res);
     } else if (req.method === 'POST' && pathname === '/api/generate') {
       await handleGenerate(req, res);

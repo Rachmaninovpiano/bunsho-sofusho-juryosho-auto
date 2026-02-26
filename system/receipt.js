@@ -530,7 +530,10 @@ async function generateReceipt(pdfPath, options = {}) {
 
   const receiptDate  = options.receiptDate  || defaultDate;
   const signerTitle  = options.signerTitle  || '被告訴訟代理人';
-  const signerName   = options.signerName   || '大元和貴';
+  const defaultName  = (CONFIG.lawyerNames && CONFIG.lawyerNames.length > 0)
+    ? CONFIG.lawyerNames[CONFIG.lawyerNames.length - 1]
+    : '山田太郎';
+  const signerName   = options.signerName   || defaultName;
   const sealImgPath  = options.sealImagePath || findSealImage();
   const outputDir    = options.outputDir    || path.join(BASE_DIR, 'output');
 
@@ -761,7 +764,7 @@ if (require.main === module) {
   const args = process.argv.slice(2);
   if (args.length === 0) {
     console.log('使い方: node system/receipt.js <PDFファイルパス> [受領日] [肩書] [弁護士名]');
-    console.log('例: node system/receipt.js FAX転送_sample.pdf "令和8年2月19日" "被告訴訟代理人" "大元和貴"');
+    console.log('例: node system/receipt.js FAX転送_sample.pdf "令和8年2月19日" "被告訴訟代理人" "山田太郎"');
     process.exit(0);
   }
 
