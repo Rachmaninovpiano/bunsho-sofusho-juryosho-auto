@@ -1,0 +1,688 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>文書送付書・受領書自動でつくる君</title>
+  <link rel="stylesheet" href="style.css">
+  <style>
+    /* 設定ボタン */
+    .settings-btn {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      width: 48px;
+      height: 48px;
+      border-radius: 50%;
+      background: var(--primary);
+      color: white;
+      border: none;
+      cursor: pointer;
+      box-shadow: 0 4px 12px rgba(79, 70, 229, 0.4);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: transform 0.2s, box-shadow 0.2s;
+      z-index: 100;
+    }
+    .settings-btn:hover {
+      transform: scale(1.1);
+      box-shadow: 0 6px 20px rgba(79, 70, 229, 0.5);
+    }
+
+    /* 設定モーダル */
+    .settings-modal {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.5);
+      z-index: 1000;
+      align-items: center;
+      justify-content: center;
+    }
+    .settings-modal.visible {
+      display: flex;
+    }
+    .settings-modal-content {
+      background: white;
+      border-radius: 16px;
+      padding: 32px;
+      max-width: 480px;
+      width: 90%;
+      max-height: 85vh;
+      overflow-y: auto;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+    }
+    .settings-modal-content h2 {
+      margin: 0 0 20px;
+      font-size: 1.3em;
+    }
+    .settings-group {
+      margin-bottom: 16px;
+    }
+    .settings-group label {
+      display: block;
+      font-size: 0.85em;
+      font-weight: 600;
+      color: var(--text-secondary);
+      margin-bottom: 4px;
+    }
+    .settings-group input,
+    .settings-group textarea {
+      width: 100%;
+      padding: 8px 12px;
+      border: 1.5px solid var(--border);
+      border-radius: 8px;
+      font-size: 0.95em;
+      box-sizing: border-box;
+    }
+    .settings-group .hint {
+      font-size: 0.78em;
+      color: var(--text-secondary);
+      margin-top: 2px;
+    }
+    .settings-actions {
+      display: flex;
+      gap: 8px;
+      justify-content: flex-end;
+      margin-top: 20px;
+    }
+    .seal-area {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-top: 4px;
+    }
+    .seal-area .btn {
+      font-size: 0.82em;
+      padding: 4px 12px;
+    }
+
+    /* OCR初回ダウンロード通知 */
+    .ocr-notice {
+      background: #eff6ff;
+      border: 1px solid #bfdbfe;
+      border-radius: 8px;
+      padding: 10px 14px;
+      margin-top: 12px;
+      font-size: 0.82em;
+      color: #1e40af;
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+    }
+    .ocr-notice svg {
+      flex-shrink: 0;
+      margin-top: 1px;
+    }
+  </style>
+</head>
+<body>
+  <!-- 背景装飾 -->
+  <div class="bg-decoration">
+    <div class="bg-circle bg-circle-1"></div>
+    <div class="bg-circle bg-circle-2"></div>
+    <div class="bg-circle bg-circle-3"></div>
+  </div>
+
+  <div class="container">
+    <!-- ヘッダー -->
+    <header class="header">
+      <div class="logo">
+        <div class="logo-icon" id="logoIcon">
+          <svg width="30" height="30" viewBox="0 0 64 64" fill="none">
+            <rect x="10" y="6" width="36" height="48" rx="4" fill="white" fill-opacity="0.3" stroke="white" stroke-width="2.5"/>
+            <path d="M34 6v12h12" fill="white" fill-opacity="0.15" stroke="white" stroke-width="2" stroke-linejoin="round"/>
+            <line x1="18" y1="28" x2="38" y2="28" stroke="white" stroke-width="2.5" stroke-linecap="round" opacity="0.8"/>
+            <line x1="18" y1="35" x2="34" y2="35" stroke="white" stroke-width="2.5" stroke-linecap="round" opacity="0.6"/>
+            <line x1="18" y1="42" x2="30" y2="42" stroke="white" stroke-width="2.5" stroke-linecap="round" opacity="0.4"/>
+            <g transform="translate(36, 32) rotate(-35)">
+              <rect x="-2.5" y="-18" width="5" height="24" rx="1.5" fill="white" fill-opacity="0.9"/>
+              <polygon points="0,8 -3,14 3,14" fill="#fbbf24"/>
+              <rect x="-2.5" y="-18" width="5" height="5" rx="1" fill="#f97316" fill-opacity="0.9"/>
+            </g>
+            <circle cx="52" cy="12" r="2.5" fill="#fbbf24"/>
+            <circle cx="56" cy="22" r="1.5" fill="#fbbf24" opacity="0.7"/>
+            <circle cx="48" cy="6" r="1.5" fill="white" opacity="0.8"/>
+            <circle cx="14" cy="52" r="7" fill="#34d399" fill-opacity="0.9"/>
+            <polyline points="10.5,52 13,54.5 17.5,49.5" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </div>
+        <div>
+          <h1 id="appTitle">文書送付書自動でつくる君</h1>
+          <p class="subtitle" id="officeSubtitle"></p>
+        </div>
+      </div>
+      <!-- モード切替トグル -->
+      <div class="mode-toggle">
+        <button class="mode-btn active" id="modeSofusho" data-mode="sofusho">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+            <polyline points="14 2 14 8 20 8"/>
+            <line x1="12" y1="18" x2="12" y2="12"/>
+            <line x1="9" y1="15" x2="15" y2="15"/>
+          </svg>
+          送付書を作る
+        </button>
+        <button class="mode-btn" id="modeReceipt" data-mode="receipt">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
+            <polyline points="22 4 12 14.01 9 11.01"/>
+          </svg>
+          受領書を作る
+        </button>
+      </div>
+    </header>
+
+    <!-- ステップインジケーター -->
+    <nav class="steps-nav">
+      <div class="step active" data-step="1">
+        <div class="step-icon">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+            <polyline points="17 8 12 3 7 8"/>
+            <line x1="12" y1="3" x2="12" y2="15"/>
+          </svg>
+        </div>
+        <span>アップロード</span>
+      </div>
+      <div class="step-connector"><div class="step-connector-fill"></div></div>
+      <div class="step" data-step="2">
+        <div class="step-icon">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="10"/>
+            <polyline points="12 6 12 12 16 14"/>
+          </svg>
+        </div>
+        <span>解析</span>
+      </div>
+      <div class="step-connector"><div class="step-connector-fill"></div></div>
+      <div class="step" data-step="3">
+        <div class="step-icon">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+            <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+          </svg>
+        </div>
+        <span>確認・編集</span>
+      </div>
+      <div class="step-connector"><div class="step-connector-fill"></div></div>
+      <div class="step" data-step="4">
+        <div class="step-icon">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
+            <polyline points="22 4 12 14.01 9 11.01"/>
+          </svg>
+        </div>
+        <span>完了</span>
+      </div>
+    </nav>
+
+    <!-- ===== State 1: アップロード ===== -->
+    <section id="state-upload" class="state active">
+      <div class="card upload-card">
+        <div class="upload-area" id="dropZone">
+          <div class="upload-visual">
+            <div class="upload-ring">
+              <svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                <polyline points="17 8 12 3 7 8"/>
+                <line x1="12" y1="3" x2="12" y2="15"/>
+              </svg>
+            </div>
+          </div>
+          <h2 class="upload-heading">FAX送信書のPDFをドロップ</h2>
+          <p class="upload-desc">ファイルをここにドラッグ＆ドロップしてください</p>
+          <div class="upload-divider">
+            <span>または</span>
+          </div>
+          <label class="btn btn-primary btn-glow upload-btn-label">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+              <polyline points="17 8 12 3 7 8"/>
+              <line x1="12" y1="3" x2="12" y2="15"/>
+            </svg>
+            ファイルを選択
+            <input type="file" id="fileInput" accept=".pdf" multiple hidden>
+          </label>
+          <div class="upload-formats">
+            <div class="format-badge">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                <polyline points="14 2 14 8 20 8"/>
+              </svg>
+              PDF対応
+            </div>
+            <div class="format-badge">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+                <circle cx="8.5" cy="8.5" r="1.5"/>
+                <polyline points="21 15 16 10 5 21"/>
+              </svg>
+              画像PDF (OCR)
+            </div>
+            <div class="format-badge">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="4 7 4 4 20 4 20 7"/>
+                <line x1="9" y1="20" x2="15" y2="20"/>
+                <line x1="12" y1="4" x2="12" y2="20"/>
+              </svg>
+              テキストPDF
+            </div>
+          </div>
+        </div>
+        <div class="ocr-notice">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="10"/>
+            <line x1="12" y1="16" x2="12" y2="12"/>
+            <line x1="12" y1="8" x2="12.01" y2="8"/>
+          </svg>
+          <span>初回のOCR処理時、日本語言語データ（約15MB）がダウンロードされます。2回目以降はキャッシュされるため高速です。</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== State 2: 処理中 ===== -->
+    <section id="state-processing" class="state">
+      <div class="card processing-card">
+        <div class="processing-animation">
+          <div class="pulse-ring"></div>
+          <div class="pulse-ring pulse-ring-2"></div>
+          <div class="processing-icon-inner">
+            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="10"/>
+              <path d="M12 6v6l4 2"/>
+            </svg>
+          </div>
+        </div>
+        <h2 id="processingTitle">PDFを解析中...</h2>
+        <p id="processingMessage" class="processing-msg">OCRで文字を認識しています。しばらくお待ちください。</p>
+        <div class="processing-steps">
+          <div class="proc-step active" id="procStep1">
+            <div class="proc-dot"></div>
+            <span>PDF読み取り</span>
+          </div>
+          <div class="proc-step" id="procStep2">
+            <div class="proc-dot"></div>
+            <span>文字認識 (OCR)</span>
+          </div>
+          <div class="proc-step" id="procStep3">
+            <div class="proc-dot"></div>
+            <span>情報抽出</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== State 3: 確認・編集 ===== -->
+    <section id="state-confirm" class="state">
+      <div class="confirm-top">
+        <div class="confirm-top-left">
+          <h2>抽出結果の確認・編集</h2>
+          <p class="confirm-file" id="sourceFileName"></p>
+        </div>
+        <div class="confirm-top-right">
+          <span class="status-badge status-success" id="extractStatus">自動抽出完了</span>
+        </div>
+      </div>
+
+      <div class="form-grid">
+        <div class="card form-card">
+          <div class="card-header">
+            <div class="card-icon card-icon-blue">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M3 21h18M3 10h18M5 6l7-3 7 3M4 10v11M20 10v11M8 14v3M12 14v3M16 14v3"/>
+              </svg>
+            </div>
+            <h3>裁判所</h3>
+          </div>
+          <div class="form-group">
+            <label for="courtName">裁判所名</label>
+            <input type="text" id="courtName" placeholder="例: 東京地方裁判所民事第1部">
+          </div>
+          <div class="form-group">
+            <label for="courtFax">FAX番号</label>
+            <input type="text" id="courtFax" placeholder="例: 03-1234-5678">
+          </div>
+        </div>
+
+        <div class="card form-card">
+          <div class="card-header">
+            <div class="card-icon card-icon-purple">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                <polyline points="14 2 14 8 20 8"/>
+                <line x1="16" y1="13" x2="8" y2="13"/>
+                <line x1="16" y1="17" x2="8" y2="17"/>
+              </svg>
+            </div>
+            <h3>事件情報</h3>
+          </div>
+          <div class="form-group">
+            <label for="caseNumber">
+              事件番号
+              <span class="ocr-badge" id="caseNumberWarning" hidden>OCR推測値 - 要確認</span>
+            </label>
+            <input type="text" id="caseNumber" placeholder="例: 令和7年(ワ)第100号">
+          </div>
+          <div class="form-group">
+            <label for="caseName">事件名</label>
+            <input type="text" id="caseName" placeholder="例: 損害賠償請求事件">
+          </div>
+        </div>
+
+        <div class="card form-card">
+          <div class="card-header">
+            <div class="card-icon card-icon-green">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+                <circle cx="9" cy="7" r="4"/>
+                <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
+                <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+              </svg>
+            </div>
+            <h3>当事者</h3>
+          </div>
+          <div class="form-group">
+            <label for="plaintiffName">原告</label>
+            <input type="text" id="plaintiffName" placeholder="例: 山田花子 外1名">
+          </div>
+          <div class="form-group">
+            <label for="defendantName">被告</label>
+            <input type="text" id="defendantName" placeholder="例: 株式会社○○ 外1名">
+          </div>
+        </div>
+
+        <div class="card form-card">
+          <div class="card-header">
+            <div class="card-icon card-icon-orange">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+                <circle cx="12" cy="7" r="4"/>
+              </svg>
+            </div>
+            <h3>原告代理人</h3>
+          </div>
+          <div class="form-group">
+            <label for="plaintiffLawyer">弁護士名</label>
+            <input type="text" id="plaintiffLawyer" placeholder="例: 鈴木次郎">
+          </div>
+          <div class="form-group">
+            <label for="plaintiffLawyerFax">FAX番号</label>
+            <input type="text" id="plaintiffLawyerFax" placeholder="例: 03-9876-5432">
+          </div>
+        </div>
+      </div>
+
+      <div class="card form-card form-card-wide">
+        <div class="card-header">
+          <div class="card-icon card-icon-indigo">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="2" y="7" width="20" height="14" rx="2" ry="2"/>
+              <path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/>
+            </svg>
+          </div>
+          <h3>送付書類</h3>
+        </div>
+        <div class="form-group">
+          <label for="documentTitle">送付書類名</label>
+          <input type="text" id="documentTitle" placeholder="例: 原告準備書面(5)" class="input-large">
+        </div>
+      </div>
+
+      <div class="form-actions">
+        <button class="btn btn-ghost" id="btnBack">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="19" y1="12" x2="5" y2="12"/>
+            <polyline points="12 19 5 12 12 5"/>
+          </svg>
+          最初に戻る
+        </button>
+        <button class="btn btn-primary btn-large btn-glow" id="btnGenerate">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+            <polyline points="14 2 14 8 20 8"/>
+            <line x1="12" y1="18" x2="12" y2="12"/>
+            <line x1="9" y1="15" x2="15" y2="15"/>
+          </svg>
+          文書送付書を生成
+        </button>
+      </div>
+    </section>
+
+    <!-- ===== State 3R: 受領書確認画面 ===== -->
+    <section id="state-receipt-confirm" class="state">
+      <div class="confirm-top">
+        <div class="confirm-top-left">
+          <h2>受領書オプション</h2>
+          <p class="confirm-file" id="receiptSourceFileName"></p>
+        </div>
+        <div class="confirm-top-right">
+          <span class="status-badge status-success" id="receiptFileCountBadge">受領書モード</span>
+        </div>
+      </div>
+      <div id="receiptFileListWrap" style="display:none" class="card" style="margin-bottom:16px;padding:12px 16px;">
+        <p style="font-size:0.85em;color:var(--text-secondary);margin:0 0 8px">処理予定ファイル:</p>
+        <ul id="receiptFileList" style="margin:0;padding:0 0 0 18px;font-size:0.85em;color:var(--text-primary);"></ul>
+      </div>
+
+      <div class="form-grid">
+        <div class="card form-card">
+          <div class="card-header">
+            <div class="card-icon card-icon-green">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+                <circle cx="12" cy="7" r="4"/>
+              </svg>
+            </div>
+            <h3>署名</h3>
+          </div>
+          <div class="form-group">
+            <label for="receiptSignerTitle">肩書</label>
+            <select id="receiptSignerTitle" class="form-select">
+              <option value="被告訴訟代理人">被告訴訟代理人</option>
+              <option value="原告訴訟代理人">原告訴訟代理人</option>
+              <option value="相手方代理人">相手方代理人</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="receiptSignerName">弁護士名</label>
+            <input type="text" id="receiptSignerName" value="">
+          </div>
+        </div>
+
+        <div class="card form-card">
+          <div class="card-header">
+            <div class="card-icon card-icon-blue">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/>
+                <line x1="16" y1="2" x2="16" y2="6"/>
+                <line x1="8" y1="2" x2="8" y2="6"/>
+                <line x1="3" y1="10" x2="21" y2="10"/>
+              </svg>
+            </div>
+            <h3>受領日</h3>
+          </div>
+          <div class="form-group">
+            <label for="receiptDate">受領日（令和表記）</label>
+            <input type="text" id="receiptDate" placeholder="自動（今日の日付）">
+          </div>
+          <p class="receipt-date-hint">空欄の場合、今日の日付が自動入力されます</p>
+        </div>
+      </div>
+
+      <div class="form-actions">
+        <button class="btn btn-ghost" id="btnReceiptBack">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="19" y1="12" x2="5" y2="12"/>
+            <polyline points="12 19 5 12 12 5"/>
+          </svg>
+          最初に戻る
+        </button>
+        <button class="btn btn-primary btn-large btn-glow" id="btnReceiptGenerate">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
+            <polyline points="22 4 12 14.01 9 11.01"/>
+          </svg>
+          受領書を生成
+        </button>
+      </div>
+    </section>
+
+    <!-- ===== State 4: 完了 ===== -->
+    <section id="state-complete" class="state">
+      <div class="card complete-card">
+        <div class="complete-visual">
+          <div class="confetti-container" id="confetti"></div>
+          <div class="complete-check">
+            <svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+              <polyline points="20 6 9 17 4 12"/>
+            </svg>
+          </div>
+        </div>
+        <h2 id="completeTitle">文書送付書の生成が完了しました</h2>
+        <p id="outputFileName" class="output-file"></p>
+
+        <div id="singleDownloadArea" class="complete-buttons">
+          <a class="btn btn-primary btn-large btn-glow" id="btnDownload" href="#" download>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+              <polyline points="7 10 12 15 17 10"/>
+              <line x1="12" y1="15" x2="12" y2="3"/>
+            </svg>
+            <span id="downloadLabel">Wordファイルをダウンロード</span>
+          </a>
+        </div>
+
+        <div id="multiDownloadArea" style="display:none;width:100%;max-width:480px;margin:0 auto 16px;">
+          <ul id="downloadList" style="list-style:none;padding:0;margin:0;display:flex;flex-direction:column;gap:8px;"></ul>
+        </div>
+
+        <div class="complete-buttons" style="margin-top:8px;">
+          <button class="btn btn-outline" id="btnNewFile">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="23 4 23 10 17 10"/>
+              <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+            </svg>
+            別のPDFを処理する
+          </button>
+        </div>
+
+        <div class="complete-tip">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="10"/>
+            <line x1="12" y1="16" x2="12" y2="12"/>
+            <line x1="12" y1="8" x2="12.01" y2="8"/>
+          </svg>
+          生成されたファイルの内容を送付前に必ずご確認ください
+        </div>
+      </div>
+    </section>
+
+    <!-- ドラッグオーバーレイ -->
+    <div id="dragOverlay" class="drag-overlay">
+      <div class="drag-overlay-content">
+        <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+          <polyline points="17 8 12 3 7 8"/>
+          <line x1="12" y1="3" x2="12" y2="15"/>
+        </svg>
+        <p>ここにPDFをドロップ!</p>
+      </div>
+    </div>
+
+    <!-- エラートースト -->
+    <div id="errorToast" class="toast toast-error" hidden>
+      <div class="toast-icon">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="10"/>
+          <line x1="15" y1="9" x2="9" y2="15"/>
+          <line x1="9" y1="9" x2="15" y2="15"/>
+        </svg>
+      </div>
+      <span id="errorMessage"></span>
+      <button class="toast-close" id="errorClose">&times;</button>
+    </div>
+  </div>
+
+  <!-- 設定ボタン（フローティング）-->
+  <button class="settings-btn" id="settingsBtn" title="設定">
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <circle cx="12" cy="12" r="3"/>
+      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+    </svg>
+  </button>
+
+  <!-- 設定モーダル -->
+  <div class="settings-modal" id="settingsModal">
+    <div class="settings-modal-content">
+      <h2>事務所設定</h2>
+      <div class="settings-group">
+        <label for="settingsOfficeName">事務所名</label>
+        <input type="text" id="settingsOfficeName" placeholder="例: ○○法律事務所">
+        <div class="hint">ヘッダーに表示されます</div>
+      </div>
+      <div class="settings-group">
+        <label for="settingsSignerName">デフォルト署名者名</label>
+        <input type="text" id="settingsSignerName" placeholder="例: 山田太郎">
+        <div class="hint">受領書の署名欄のデフォルト値として使用されます</div>
+      </div>
+      <div class="settings-group">
+        <label for="settingsLawyerNames">自事務所の弁護士名（カンマ区切り）</label>
+        <input type="text" id="settingsLawyerNames" placeholder="例: 山田, 山田太郎">
+        <div class="hint">文書送付書の原告代理人検出時に自事務所の弁護士を除外します</div>
+      </div>
+      <div class="settings-group">
+        <label for="settingsFaxNumbers">自事務所のFAX番号（カンマ区切り）</label>
+        <input type="text" id="settingsFaxNumbers" placeholder="例: 03-1234-5678">
+        <div class="hint">文書送付書のFAX番号検出時に自事務所のFAXを除外します</div>
+      </div>
+      <div class="settings-group">
+        <label>印鑑画像</label>
+        <div class="seal-area">
+          <div id="sealPreview">
+            <span style="color:var(--text-secondary);font-size:0.85em;">未設定</span>
+          </div>
+          <label class="btn btn-outline" style="cursor:pointer;font-size:0.82em;padding:4px 12px;">
+            画像を選択
+            <input type="file" id="sealInput" accept="image/png,image/jpeg" hidden>
+          </label>
+          <button class="btn btn-ghost" id="sealRemove" style="font-size:0.82em;padding:4px 8px;">削除</button>
+        </div>
+        <div class="hint">PNG/JPG画像。未設定の場合は「㊞」で代替されます</div>
+      </div>
+      <div class="settings-actions">
+        <button class="btn btn-ghost" id="settingsClose">キャンセル</button>
+        <button class="btn btn-primary" id="settingsSave">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 外部ライブラリ（CDN）-->
+  <!-- pdf.js (PDF描画・テキスト抽出) -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.min.js"></script>
+  <script>
+    // pdf.js ワーカー設定
+    if (typeof pdfjsLib !== 'undefined') {
+      pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.worker.min.js';
+    }
+  </script>
+
+  <!-- Tesseract.js (OCR) -->
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+
+  <!-- pdf-lib (PDF操作) -->
+  <script src="https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
+
+  <!-- fontkit (pdf-lib用フォント埋め込み) -->
+  <script src="https://cdn.jsdelivr.net/npm/@pdf-lib/fontkit@1.1.1/dist/fontkit.umd.min.js"></script>
+
+  <!-- JSZip (Word操作) -->
+  <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+
+  <!-- アプリケーション -->
+  <script src="receipt-browser.js"></script>
+  <script src="generate-browser.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

@@ -20,8 +20,12 @@ stamp.bmp
 # VBSスクリプト
 *.vbs
 
-# テンプレート（個人文書）
-template/
+# テンプレート（個人文書）- ルート直下のみ
+/template/
+
+# docs/（GitHub Pages公開用）は追跡する
+!docs/
+!docs/**
 
 # ログ
 system/last_run.log
