@@ -15,6 +15,9 @@ function getConfig() {
   } catch (e) { return {}; }
 }
 
+// ===== CMap URL（日本語PDFのテキスト抽出に必須）=====
+const RECEIPT_CMAP_URL = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/cmaps/';
+
 // ===== pdf.js でPDFページをcanvasに描画 → Tesseract.jsでOCR =====
 
 /**
@@ -27,8 +30,12 @@ function getConfig() {
 async function runOcrBrowser(pdfArrayBuffer, pageNum, onProgress) {
   onProgress && onProgress(`ページ${pageNum}を描画中...`);
 
-  // pdf.js でページをcanvasに描画
-  const pdfDoc = await pdfjsLib.getDocument({ data: pdfArrayBuffer }).promise;
+  // pdf.js でページをcanvasに描画（CMap設定で日本語対応）
+  const pdfDoc = await pdfjsLib.getDocument({
+    data: pdfArrayBuffer,
+    cMapUrl: RECEIPT_CMAP_URL,
+    cMapPacked: true,
+  }).promise;
   const page = await pdfDoc.getPage(pageNum);
 
   // 300dpi相当のスケール

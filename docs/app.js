@@ -299,6 +299,7 @@
       setState('confirm');
 
     } catch (err) {
+      console.error('[つくる君] PDF解析エラー:', err);
       resetProcessingSteps();
       showError(err.message || 'PDF解析中にエラーが発生しました。');
       setState('upload');

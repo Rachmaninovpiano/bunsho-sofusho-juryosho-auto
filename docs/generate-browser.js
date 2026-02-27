@@ -49,23 +49,69 @@ function getTodayReiwa() {
   return { year, month, day };
 }
 
+// ===== CMap URL（日本語PDFのテキスト抽出に必須）=====
+const CMAP_URL = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/cmaps/';
+
 // ===== pdf.js でPDFからテキスト抽出 =====
 async function extractTextFromPDFBrowser(pdfArrayBuffer, onProgress) {
   onProgress && onProgress('PDFからテキストを抽出中...');
 
-  const pdfDoc = await pdfjsLib.getDocument({ data: pdfArrayBuffer }).promise;
+  const pdfDoc = await pdfjsLib.getDocument({
+    data: pdfArrayBuffer,
+    cMapUrl: CMAP_URL,
+    cMapPacked: true,
+  }).promise;
   const totalPages = pdfDoc.numPages;
   let text = '';
 
   for (let i = 1; i <= totalPages; i++) {
     const page = await pdfDoc.getPage(i);
     const content = await page.getTextContent();
+
+    // pdf.jsのTextItemは座標情報(transform)を持つ。
+    // Y座標が変わったら改行を挿入し、同じ行でX座標に隙間があればスペースを入れる。
+    let lastY = null;
+    let lastEndX = null;
+
     for (const item of content.items) {
-      if (item.str) text += item.str;
-      if (item.hasEOL) text += '\n';
+      // TextMarkedContent (type='beginMarkedContent'等) はスキップ
+      if (!item.str && item.str !== '') continue;
+
+      const tx = item.transform; // [scaleX, skewX, skewY, scaleY, translateX, translateY]
+      if (tx) {
+        const y = Math.round(tx[5]); // Y座標
+        const x = tx[4]; // X座標
+        const itemWidth = item.width || 0;
+
+        if (lastY !== null && Math.abs(y - lastY) > 3) {
+          // 行が変わった → 改行
+          text += '\n';
+          lastEndX = null;
+        } else if (lastEndX !== null && x > lastEndX + 5) {
+          // 同じ行だが隙間がある → スペース
+          text += ' ';
+        }
+
+        text += item.str;
+        lastY = y;
+        lastEndX = x + itemWidth;
+      } else {
+        // transform が無い場合はそのまま追加
+        text += item.str;
+      }
+
+      // hasEOL フラグがあれば改行
+      if (item.hasEOL) {
+        text += '\n';
+        lastY = null;
+        lastEndX = null;
+      }
     }
-    text += '\n';
+    text += '\n\n';
   }
+
+  console.log('[文書送付書] テキスト抽出完了:', text.length, '文字');
+  console.log('[文書送付書] 先頭500文字:', text.substring(0, 500));
 
   return text;
 }
@@ -74,7 +120,11 @@ async function extractTextFromPDFBrowser(pdfArrayBuffer, onProgress) {
 async function extractTextWithOCRBrowser(pdfArrayBuffer, onProgress) {
   onProgress && onProgress('画像PDFを検出。OCRで文字認識中...');
 
-  const pdfDoc = await pdfjsLib.getDocument({ data: pdfArrayBuffer }).promise;
+  const pdfDoc = await pdfjsLib.getDocument({
+    data: pdfArrayBuffer,
+    cMapUrl: CMAP_URL,
+    cMapPacked: true,
+  }).promise;
   const totalPages = Math.min(pdfDoc.numPages, 3); // 最大3ページ
 
   let allText = '';
@@ -114,16 +164,27 @@ async function extractTextWithOCRBrowser(pdfArrayBuffer, onProgress) {
 
 // ===== PDFからテキスト抽出（テキスト埋め込みなし→OCRフォールバック）=====
 async function extractTextBrowser(pdfArrayBuffer, onProgress) {
-  const text = await extractTextFromPDFBrowser(pdfArrayBuffer, onProgress);
+  try {
+    const text = await extractTextFromPDFBrowser(pdfArrayBuffer, onProgress);
 
-  // テキストが実質空（空白・改行のみ）ならOCR
-  const trimmed = text.replace(/[\s\n\r]/g, '');
-  if (trimmed.length < 10) {
-    console.log('  テキスト埋め込みなしPDF → OCRに切り替え');
+    // テキストが実質空（空白・改行のみ）ならOCR
+    const trimmed = text.replace(/[\s\n\r]/g, '');
+    console.log('[文書送付書] テキスト抽出結果: ' + trimmed.length + '文字 (空白除去後)');
+
+    if (trimmed.length < 10) {
+      console.log('[文書送付書] テキスト埋め込みなしPDF → OCRに切り替え');
+      onProgress && onProgress('画像PDFを検出。OCRで文字認識中...');
+      return await extractTextWithOCRBrowser(pdfArrayBuffer, onProgress);
+    }
+
+    return text;
+  } catch (err) {
+    console.error('[文書送付書] テキスト抽出エラー:', err);
+    // テキスト抽出失敗 → OCRフォールバック
+    console.log('[文書送付書] テキスト抽出失敗 → OCRに切り替え');
+    onProgress && onProgress('テキスト抽出に失敗。OCRで文字認識中...');
     return await extractTextWithOCRBrowser(pdfArrayBuffer, onProgress);
   }
-
-  return text;
 }
 
 // ===== 情報抽出（サーバー版と同一ロジック）=====
@@ -210,12 +271,12 @@ function extractInfoFromText(text) {
     }
   }
 
-  // --- 事件名 ---
+  // --- 事件名 ---（文字間スペースにも対応）
   const caseNamePatterns = [
-    /損害\s*賠償[\s\S]{0,50}?請求\s*事件/,
-    /(?:号\s*)([\u4e00-\u9fff]+(?:請求|確認|等?)\s*事件)/,
-    /(損害賠償請求事件|貸金返還請求事件|建物明渡請求事件|不当利得返還請求事件|(?:[\u4e00-\u9fff]+請求事件))/,
-    /([\u4e00-\u9fff]+\s+(?:請求|確認)\s*事件)/,
+    /損\s*害\s*賠\s*償[\s\S]{0,80}?請\s*求\s*事\s*件/,
+    /(?:号\s*)([\u4e00-\u9fff][\u4e00-\u9fff\s]*(?:請\s*求|確\s*認|等?)\s*事\s*件)/,
+    /(損\s*害\s*賠\s*償\s*請\s*求\s*事\s*件|貸\s*金\s*返\s*還\s*請\s*求\s*事\s*件|建\s*物\s*明\s*渡\s*請\s*求\s*事\s*件|不\s*当\s*利\s*得\s*返\s*還\s*請\s*求\s*事\s*件)/,
+    /([\u4e00-\u9fff][\u4e00-\u9fff\s]*(?:請\s*求|確\s*認)\s*事\s*件)/,
   ];
   for (const pattern of caseNamePatterns) {
     const match = normalizedText.match(pattern);
@@ -280,13 +341,25 @@ function extractInfoFromText(text) {
   // フォールバック: 当事者セクションで見つからなかった場合
   if (!info.plaintiffName) {
     const plaintiffPatterns = [
-      /[【\[]\s*原\s*告\s*[】\]]\s*([^\n【\[]{1,30})/,
-      /原\s*告\s+(?!.*(?:訴訟|代理))([^\n（(被代訴]{1,20})/,
+      // パターン1: 【原告】の後に名前（同一行 or 次行）※全角半角括弧対応
+      /[【\[［]\s*原\s*告\s*[】\]］]\s*\n?\s*([\u4e00-\u9fff\u3040-\u309f\u30a0-\u30ff][^\n【\[［]{1,30})/,
+      // パターン2: 原告 ＋ 名前（訴訟代理人でない）※スペース入り文字にも対応
+      /原\s*告\s+(?!.*(?:訴\s*訟|代\s*理))([\u4e00-\u9fff\u3040-\u309f\u30a0-\u30ff][^\n（(被代訴】\]］]{1,20})/,
     ];
     for (const pattern of plaintiffPatterns) {
-      const match = normalizedText.match(pattern);
-      if (match) {
+      // 全マッチを試して、「ら」だけの場合はスキップ
+      const allMatches = [];
+      const globalPattern = new RegExp(pattern.source, 'g');
+      let match;
+      while ((match = globalPattern.exec(normalizedText)) !== null) {
+        allMatches.push(match);
+      }
+      // 最もまともな名前を選ぶ（1文字の「ら」等をスキップ）
+      for (const match of allMatches) {
         let name = match[1].trim();
+        const cleanedName = name.replace(/\s+/g, '');
+        // 「ら」「】」等の1文字はスキップ
+        if (cleanedName.length <= 1) continue;
         name = name.replace(/\s*(外\s*\d+\s*名)\s*$/, (_, suffix) => {
           return ' ' + suffix.replace(/\s+/g, '');
         });
@@ -294,22 +367,32 @@ function extractInfoFromText(text) {
         if (parts.length > 1) {
           info.plaintiffName = parts[0].replace(/\s+/g, '') + ' ' + parts[1];
         } else {
-          info.plaintiffName = name.replace(/\s+/g, '');
+          info.plaintiffName = cleanedName;
         }
         break;
       }
+      if (info.plaintiffName) break;
     }
   }
 
   if (!info.defendantName) {
     const defendantPatterns = [
-      /[【\[]\s*(?:被|a)\s*告\s*[】\]]\s*([^\n【\[]{1,30})/,
-      /被\s*告\s+(?!.*(?:訴訟|代理))([^\n（(原代訴]{1,30})/,
+      // パターン1: 【被告】の後に名前（同一行 or 次行）※全角半角括弧対応
+      /[【\[［]\s*(?:被|a)\s*告\s*[】\]］]\s*\n?\s*([\u4e00-\u9fff\u3040-\u309f\u30a0-\u30ff][^\n【\[［]{1,30})/,
+      // パターン2: 被告 ＋ 名前（訴訟代理人でない）※スペース入り文字にも対応
+      /被\s*告\s+(?!.*(?:訴\s*訟|代\s*理))([\u4e00-\u9fff\u3040-\u309f\u30a0-\u30ff][^\n（(原代訴】\]］]{1,30})/,
     ];
     for (const pattern of defendantPatterns) {
-      const match = normalizedText.match(pattern);
-      if (match) {
+      const allMatches = [];
+      const globalPattern = new RegExp(pattern.source, 'g');
+      let match;
+      while ((match = globalPattern.exec(normalizedText)) !== null) {
+        allMatches.push(match);
+      }
+      for (const match of allMatches) {
         let name = match[1].trim();
+        const cleanedName = name.replace(/\s+/g, '');
+        if (cleanedName.length <= 1) continue;
         name = name.replace(/\s*(外\s*\d+\s*名)\s*$/, (_, suffix) => {
           return ' ' + suffix.replace(/\s+/g, '');
         });
@@ -317,10 +400,11 @@ function extractInfoFromText(text) {
         if (parts.length > 1) {
           info.defendantName = parts[0].replace(/\s+/g, '') + ' ' + parts[1];
         } else {
-          info.defendantName = name.replace(/\s+/g, '');
+          info.defendantName = cleanedName;
         }
         break;
       }
+      if (info.defendantName) break;
     }
   }
 
@@ -422,12 +506,12 @@ function extractInfoFromText(text) {
   function normalizeFax(raw) {
     return raw
       .replace(/[０-９]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0))
-      .replace(/[－ー]/g, '-');
+      .replace(/[－ー・]/g, '-');
   }
 
   // 明示的裁判所FAX
   const explicitCourtFaxMatch = normalizedText.match(
-    /裁\s*判\s*所[\s\S]{0,60}?[（(]\s*(?:FAX|ＦＡＸ|[Ff]ax)\s*([0-9０-９\-－ー]+)\s*[）)]/
+    /裁\s*判\s*所[\s\S]{0,60}?[（(]\s*(?:FAX|ＦＡＸ|[Ff]ax)\s*([0-9０-９\-－ー・]+)\s*[）)]/
   );
   if (explicitCourtFaxMatch) {
     info.courtFaxFromPdf = normalizeFax(explicitCourtFaxMatch[1]);
@@ -435,7 +519,7 @@ function extractInfoFromText(text) {
 
   // 明示的ラベル付きFAX
   const allExplicitFaxes = [];
-  const explicitFaxRegex = /([\u4e00-\u9fff]{1,10})\s*[（(]\s*(?:FAX|ＦＡＸ|[Ff]ax)\s*([0-9０-９\-－ー]+)\s*[）)]/g;
+  const explicitFaxRegex = /([\u4e00-\u9fff]{1,10})\s*[（(]\s*(?:FAX|ＦＡＸ|[Ff]ax)\s*([0-9０-９\-－ー・]+)\s*[）)]/g;
   let efm;
   while ((efm = explicitFaxRegex.exec(normalizedText)) !== null) {
     allExplicitFaxes.push({ label: efm[1], fax: normalizeFax(efm[2]) });
@@ -450,7 +534,7 @@ function extractInfoFromText(text) {
   }
 
   // 通常FAX番号抽出
-  const faxRegex = /(?:FAX|ＦＡＸ|[Ff]ax)[：:\s]*([0-9０-９\-－ー]+)/g;
+  const faxRegex = /(?:FAX|ＦＡＸ|[Ff]ax)[：:\s]*([0-9０-９\-－ー・]+)/g;
   const allFaxEntries = [];
   let faxMatch;
   while ((faxMatch = faxRegex.exec(normalizedText)) !== null) {
@@ -669,21 +753,25 @@ function getDocumentTitleFromFilename(fileName) {
  * @returns {Promise<{ info: Object, documentTitle: string, originalName: string }>}
  */
 async function uploadAndExtractBrowser(file, onProgress) {
-  console.log('文書送付書: PDF解析開始:', file.name);
+  console.log('[つくる君] === PDF解析開始 ===');
+  console.log('[つくる君] ファイル名:', file.name, 'サイズ:', file.size);
   onProgress && onProgress('PDFを読み込み中...');
 
   const pdfArrayBuffer = await file.arrayBuffer();
+  console.log('[つくる君] ArrayBuffer取得完了:', pdfArrayBuffer.byteLength, 'bytes');
 
   // テキスト抽出（テキスト埋め込み→OCRフォールバック）
   const pdfText = await extractTextBrowser(pdfArrayBuffer, onProgress);
 
-  console.log('--- PDF抽出テキスト (先頭500文字) ---');
-  console.log(pdfText.substring(0, 500));
+  console.log('[つくる君] === 抽出テキスト (先頭800文字) ===');
+  console.log(pdfText.substring(0, 800));
+  console.log('[つくる君] === テキスト終わり (全', pdfText.length, '文字) ===');
 
   // 情報抽出
   onProgress && onProgress('情報を抽出中...');
   const info = extractInfoFromText(pdfText);
-  console.log('抽出結果:', JSON.stringify(info, null, 2));
+  console.log('[つくる君] === 抽出結果 ===');
+  console.log(JSON.stringify(info, null, 2));
 
   // 送付書類名（ファイル名から）
   const documentTitle = getDocumentTitleFromFilename(file.name);
