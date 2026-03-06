@@ -549,12 +549,13 @@
           <span class="status-badge status-success" id="evidenceFileCountBadge">証拠番号モード</span>
         </div>
       </div>
-      <div id="evidenceFileListWrap" style="display:none" class="card" style="margin-bottom:16px;padding:12px 16px;">
+      <div id="evidenceFileListWrap" style="display:none;" class="card" style="margin-bottom:16px;padding:12px 16px;">
         <p style="font-size:0.85em;color:var(--text-secondary);margin:0 0 8px">処理予定ファイル:</p>
         <ul id="evidenceFileList" style="margin:0;padding:0 0 0 18px;font-size:0.85em;color:var(--text-primary);"></ul>
       </div>
 
       <div class="form-grid">
+        <!-- 証拠番号設定 -->
         <div class="card form-card">
           <div class="card-header">
             <div class="card-icon" style="background:#fef2f2;color:#dc2626;">
@@ -585,12 +586,25 @@
             </select>
           </div>
           <div class="form-group">
-            <label for="evidenceNumber">号証番号（半角数字）</label>
-            <input type="number" id="evidenceNumber" min="1" value="1" placeholder="例: 1" class="input-large">
-            <div style="font-size:0.78em;color:var(--text-secondary);margin-top:2px;">複数PDFの場合、この番号から連番で振られます</div>
+            <label style="display:flex;align-items:center;gap:8px;">
+              <input type="checkbox" id="evidenceUseDai">
+              「第」を入れる（甲<strong>第</strong>1号証）
+            </label>
           </div>
+          <div style="display:flex;gap:10px;">
+            <div class="form-group" style="flex:1;">
+              <label for="evidenceNumber">号証番号</label>
+              <input type="number" id="evidenceNumber" min="1" value="1" placeholder="1">
+            </div>
+            <div class="form-group" style="flex:1;">
+              <label for="evidenceSubNum">枝番（任意）</label>
+              <input type="number" id="evidenceSubNum" min="1" placeholder="なし">
+            </div>
+          </div>
+          <div style="font-size:0.78em;color:var(--text-secondary);margin-top:-8px;">複数PDF時は号証番号から連番。枝番は単体PDF時のみ有効</div>
         </div>
 
+        <!-- 書誌情報（証拠説明書用） -->
         <div class="card form-card">
           <div class="card-header">
             <div class="card-icon" style="background:#fef2f2;color:#dc2626;">
@@ -601,22 +615,57 @@
                 <line x1="16" y1="17" x2="8" y2="17"/>
               </svg>
             </div>
-            <h3>標目（タイトル）</h3>
+            <h3>書誌情報</h3>
           </div>
           <div class="form-group">
-            <label for="evidenceTitle">証拠の標目（任意）</label>
-            <input type="text" id="evidenceTitle" placeholder="例: 契約書、メール、写真" class="input-large">
-            <div style="font-size:0.78em;color:var(--text-secondary);margin-top:2px;">証拠番号の下に括弧付きで表示されます（空欄可）</div>
+            <label for="evidenceTitle">標目（証拠のタイトル）</label>
+            <input type="text" id="evidenceTitle" placeholder="例: 売買契約書">
+            <div style="font-size:0.78em;color:var(--text-secondary);margin-top:2px;">PDF右上に括弧付きで赤字表示＋証拠説明書に記載</div>
+          </div>
+          <div style="display:flex;gap:10px;">
+            <div class="form-group" style="flex:1;">
+              <label for="evidenceOriginalCopy">原本/写し</label>
+              <select id="evidenceOriginalCopy" class="form-select">
+                <option value="写し">写し</option>
+                <option value="原本">原本</option>
+              </select>
+            </div>
+            <div class="form-group" style="flex:1;">
+              <label for="evidenceCreatedDate">作成日</label>
+              <input type="text" id="evidenceCreatedDate" placeholder="例: R7.3.6">
+            </div>
+          </div>
+          <div class="form-group">
+            <label for="evidenceAuthor">作成者</label>
+            <input type="text" id="evidenceAuthor" placeholder="例: 株式会社○○">
+          </div>
+          <div class="form-group">
+            <label for="evidencePurpose">立証趣旨</label>
+            <input type="text" id="evidencePurpose" placeholder="例: 売買契約の成立">
           </div>
         </div>
       </div>
 
-      <div class="card form-card form-card-wide" style="text-align:center;">
-        <div class="card-header" style="justify-content:center;">
-          <h3>プレビュー</h3>
-        </div>
-        <div id="evidencePreview" style="font-size:2em;font-weight:700;color:#dc2626;padding:16px 0;font-family:'Noto Serif JP',serif;">
-          甲１号証
+      <!-- オプション＋プレビュー -->
+      <div class="card form-card form-card-wide">
+        <div style="display:flex;flex-wrap:wrap;gap:16px;align-items:flex-start;">
+          <div style="flex:1;min-width:200px;">
+            <h3 style="margin:0 0 12px;font-size:0.95em;">オプション</h3>
+            <label style="display:flex;align-items:center;gap:8px;font-size:0.88em;margin-bottom:8px;cursor:pointer;">
+              <input type="checkbox" id="evidenceAllPages">
+              全ページにスタンプ（1ページ目のみがデフォルト）
+            </label>
+            <label style="display:flex;align-items:center;gap:8px;font-size:0.88em;cursor:pointer;">
+              <input type="checkbox" id="evidenceOutputSheet" checked>
+              証拠説明書（Excel）も出力する
+            </label>
+          </div>
+          <div style="flex:1;min-width:200px;text-align:center;">
+            <h3 style="margin:0 0 8px;font-size:0.95em;">プレビュー</h3>
+            <div id="evidencePreview" style="font-size:1.8em;font-weight:700;color:#dc2626;padding:8px 0;white-space:pre-line;line-height:1.4;">
+              甲１号証
+            </div>
+          </div>
         </div>
       </div>
 

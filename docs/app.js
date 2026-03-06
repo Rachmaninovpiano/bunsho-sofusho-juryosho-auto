@@ -54,6 +54,26 @@
     return { year, month, day };
   }
 
+  // --- 日本語フォント読み込み（キャッシュ + CDNフォールバック） ---
+  let _cachedFontBytes = null;
+  async function loadJapaneseFont() {
+    if (_cachedFontBytes) return _cachedFontBytes;
+    const urls = [
+      'fonts/NotoSerifJP.ttf',
+      'https://cdn.jsdelivr.net/gh/Rachmaninovpiano/bunsho-sofusho-juryosho-auto@master/docs/fonts/NotoSerifJP.ttf',
+    ];
+    for (const url of urls) {
+      try {
+        const resp = await fetch(url);
+        if (resp.ok) {
+          _cachedFontBytes = await resp.arrayBuffer();
+          return _cachedFontBytes;
+        }
+      } catch (e) { continue; }
+    }
+    throw new Error('日本語フォントの読み込みに失敗しました。GitHub Pagesでお試しください。');
+  }
+
   // =============================================
   // Section 2: PDFテキスト抽出（2パス最適化）
   // =============================================
@@ -953,8 +973,7 @@
     const { width: pgW, height: pgH } = page.getSize();
 
     onProgress && onProgress('フォントを読み込み中...');
-    const fontResp = await fetch('fonts/NotoSerifJP.ttf');
-    const fontBytes = await fontResp.arrayBuffer();
+    const fontBytes = await loadJapaneseFont();
     const font = await pdfDoc.embedFont(fontBytes, { subset: false });
 
     const allChars = `行先生${receiptDate}${signerTitle}　${signerName}㊞`;
@@ -1051,63 +1070,73 @@
   }
 
   // =============================================
-  // Section 7: 証拠番号つくる君 PDF生成
+  // Section 7: 証拠番号つくる君 PDF生成 + 証拠説明書
   // =============================================
 
   /**
-   * 証拠番号と証拠説明書用の標目（タイトル）をPDFの1枚目右上に赤字でスタンプする。
-   * @param {File} file - 入力PDFファイル
-   * @param {Object} opts
-   * @param {string} opts.evidenceLabel - 例: "甲１号証", "乙B２号証"
-   * @param {string} [opts.evidenceTitle] - 例: "契約書", "メール"（任意）
-   * @returns {Promise<{blob: Blob, fileName: string}>}
+   * 証拠番号ラベルを組み立てる。
+   * @param {string} party - 甲, 乙, 丙, 甲A, 乙B 等
+   * @param {number} num - 号証番号
+   * @param {number|null} subNum - 枝番（null = なし）
+   * @param {boolean} useDai - 「第」を入れるか（甲第1号証 vs 甲1号証）
+   * @returns {string}
+   */
+  function buildEvidenceLabel(party, num, subNum, useDai) {
+    const fullNum = toFullWidthNumber(String(num));
+    let label = party;
+    if (useDai) label += '第';
+    label += fullNum + '号証';
+    if (subNum) {
+      label += 'の' + toFullWidthNumber(String(subNum));
+    }
+    return label;
+  }
+
+  /**
+   * PDFの指定ページ右上に証拠番号と標目を赤字でスタンプする。
    */
   async function generateEvidenceBrowser(file, opts) {
-    const { evidenceLabel, evidenceTitle } = opts;
+    const { evidenceLabel, evidenceTitle, allPages } = opts;
     const pdfArrayBuffer = await file.arrayBuffer();
     const pdfDoc = await PDFLib.PDFDocument.load(pdfArrayBuffer);
     pdfDoc.registerFontkit(fontkit);
 
-    const fontResp = await fetch('fonts/NotoSerifJP.ttf');
-    const fontBytes = await fontResp.arrayBuffer();
+    const fontBytes = await loadJapaneseFont();
     const font = await pdfDoc.embedFont(fontBytes, { subset: false });
-
-    const page = pdfDoc.getPage(0);
-    const { width: pgW, height: pgH } = page.getSize();
     const { rgb } = PDFLib;
 
-    const margin = 36; // 右端からのマージン（約12.7mm）
-    const topMargin = 36; // 上端からのマージン
-
-    // 証拠番号を描画（赤字、28pt、右上）
+    const margin = 36;
+    const topMargin = 36;
     const labelSize = 28;
-    const labelWidth = font.widthOfTextAtSize(evidenceLabel, labelSize);
-    const labelX = pgW - margin - labelWidth;
-    const labelY = pgH - topMargin - labelSize;
 
-    page.drawText(evidenceLabel, {
-      x: labelX,
-      y: labelY,
-      size: labelSize,
-      font: font,
-      color: rgb(1, 0, 0),
-    });
+    const pageCount = pdfDoc.getPageCount();
+    const pagesToStamp = allPages
+      ? Array.from({ length: pageCount }, (_, i) => i)
+      : [0];
 
-    // 標目（タイトル）を描画（証拠番号の下、小さめ、赤字）
-    if (evidenceTitle && evidenceTitle.trim()) {
-      const titleSize = 16;
-      const titleText = '（' + evidenceTitle.trim() + '）';
-      const titleWidth = font.widthOfTextAtSize(titleText, titleSize);
-      const titleX = pgW - margin - titleWidth;
-      const titleY = labelY - titleSize - 6;
+    for (const pageIndex of pagesToStamp) {
+      const page = pdfDoc.getPage(pageIndex);
+      const { width: pgW, height: pgH } = page.getSize();
 
-      page.drawText(titleText, {
-        x: titleX,
-        y: titleY,
-        size: titleSize,
-        font: font,
-        color: rgb(1, 0, 0),
+      const labelWidth = font.widthOfTextAtSize(evidenceLabel, labelSize);
+      const labelX = pgW - margin - labelWidth;
+      const labelY = pgH - topMargin - labelSize;
+
+      page.drawText(evidenceLabel, {
+        x: labelX, y: labelY,
+        size: labelSize, font, color: rgb(1, 0, 0),
       });
+
+      if (evidenceTitle && evidenceTitle.trim()) {
+        const titleSize = 16;
+        const titleText = '（' + evidenceTitle.trim() + '）';
+        const titleWidth = font.widthOfTextAtSize(titleText, titleSize);
+        page.drawText(titleText, {
+          x: pgW - margin - titleWidth,
+          y: labelY - titleSize - 6,
+          size: titleSize, font, color: rgb(1, 0, 0),
+        });
+      }
     }
 
     const savedBytes = await pdfDoc.save();
@@ -1115,6 +1144,44 @@
     const baseName = file.name.replace(/\.pdf$/i, '');
     const fileName = `${baseName}_${evidenceLabel}.pdf`;
     return { blob, fileName };
+  }
+
+  /**
+   * 証拠説明書をExcel互換HTML形式(.xls)で生成する。
+   * @param {Array} entries - [{label, title, originalOrCopy, createdDate, author, purpose}]
+   * @param {string} partyRole - "原告" or "被告" 等
+   * @returns {Blob}
+   */
+  function generateEvidenceSheet(entries, partyRole) {
+    const rows = entries.map(e => `<tr>
+      <td style="text-align:center;white-space:nowrap;">${e.label}</td>
+      <td>${e.title || ''}</td>
+      <td style="text-align:center;">${e.originalOrCopy || ''}</td>
+      <td style="text-align:center;white-space:nowrap;">${e.createdDate || ''}</td>
+      <td style="text-align:center;">${e.author || ''}</td>
+      <td>${e.purpose || ''}</td>
+    </tr>`).join('\n');
+
+    const html = `<html xmlns:o="urn:schemas-microsoft-com:office:office"
+xmlns:x="urn:schemas-microsoft-com:office:excel">
+<head><meta charset="UTF-8">
+<style>
+  table { border-collapse: collapse; font-family: 'ＭＳ 明朝','MS Mincho',serif; font-size: 11pt; width: 100%; }
+  th, td { border: 1px solid #000; padding: 4px 8px; vertical-align: top; }
+  th { background: #f0f0f0; font-weight: bold; text-align: center; }
+  .title { font-size: 14pt; font-weight: bold; text-align: center; margin-bottom: 8px; }
+  .party { text-align: right; margin-bottom: 4px; font-size: 11pt; }
+</style>
+</head><body>
+<p class="title">証拠説明書</p>
+<p class="party">${partyRole || ''}</p>
+<table>
+<tr><th style="width:12%;">号証</th><th style="width:20%;">標目</th><th style="width:10%;">原本・写し<br>の別</th><th style="width:12%;">作成日</th><th style="width:12%;">作成者</th><th style="width:34%;">立証趣旨</th></tr>
+${rows}
+</table>
+</body></html>`;
+
+    return new Blob(['\ufeff' + html], { type: 'application/vnd.ms-excel;charset=utf-8' });
   }
 
   // =============================================
@@ -1677,10 +1744,18 @@
     if (succeeded.length > 0) setTimeout(launchConfetti, 300);
   });
 
-  // --- 証拠番号モード: ファイル準備 ---
+  // --- 証拠番号モード: DOM参照 ---
   const evidencePartySelect = $('#evidenceParty');
   const evidenceNumberInput = $('#evidenceNumber');
+  const evidenceSubNumInput = $('#evidenceSubNum');
+  const evidenceUseDai = $('#evidenceUseDai');
   const evidenceTitleInput = $('#evidenceTitle');
+  const evidenceOriginalCopy = $('#evidenceOriginalCopy');
+  const evidenceCreatedDate = $('#evidenceCreatedDate');
+  const evidenceAuthor = $('#evidenceAuthor');
+  const evidencePurpose = $('#evidencePurpose');
+  const evidenceAllPages = $('#evidenceAllPages');
+  const evidenceOutputSheet = $('#evidenceOutputSheet');
   const evidencePreview = $('#evidencePreview');
   const evidenceSourceFileName = $('#evidenceSourceFileName');
   const btnEvidenceBack = $('#btnEvidenceBack');
@@ -1689,22 +1764,31 @@
   const evidenceFileListWrap = $('#evidenceFileListWrap');
   const evidenceFileList = $('#evidenceFileList');
 
-  function buildEvidenceLabel() {
+  function getEvidencePreviewLabel() {
     const party = evidencePartySelect ? evidencePartySelect.value : '甲';
     const num = evidenceNumberInput ? evidenceNumberInput.value.trim() : '';
-    if (!num) return party + '○号証';
-    const fullNum = toFullWidthNumber(num);
-    return party + fullNum + '号証';
+    const subNum = evidenceSubNumInput ? evidenceSubNumInput.value.trim() : '';
+    const useDai = evidenceUseDai ? evidenceUseDai.checked : false;
+    if (!num) return party + (useDai ? '第' : '') + '○号証';
+    return buildEvidenceLabel(party, parseInt(num, 10), subNum ? parseInt(subNum, 10) : null, useDai);
   }
 
   function updateEvidencePreview() {
     if (evidencePreview) {
-      evidencePreview.textContent = buildEvidenceLabel();
+      const label = getEvidencePreviewLabel();
+      evidencePreview.textContent = label;
+      const title = evidenceTitleInput ? evidenceTitleInput.value.trim() : '';
+      if (title) {
+        evidencePreview.textContent = label + '\n（' + title + '）';
+      }
     }
   }
 
-  if (evidencePartySelect) evidencePartySelect.addEventListener('change', updateEvidencePreview);
-  if (evidenceNumberInput) evidenceNumberInput.addEventListener('input', updateEvidencePreview);
+  [evidencePartySelect, evidenceNumberInput, evidenceSubNumInput, evidenceTitleInput].forEach(el => {
+    if (el) el.addEventListener('input', updateEvidencePreview);
+    if (el) el.addEventListener('change', updateEvidencePreview);
+  });
+  if (evidenceUseDai) evidenceUseDai.addEventListener('change', updateEvidencePreview);
 
   function prepareEvidenceFiles(pdfs) {
     evidenceUploadFiles = pdfs;
@@ -1748,23 +1832,34 @@
         showError('証拠番号を入力してください。');
         return;
       }
-      const titleStr = evidenceTitleInput ? evidenceTitleInput.value.trim() : '';
-      const files = evidenceUploadFiles;
-      const total = files.length;
       const startNum = parseInt(numStr, 10);
       if (isNaN(startNum) || startNum < 1) {
         showError('証拠番号は1以上の数字を入力してください。');
         return;
       }
+      const subNumStr = evidenceSubNumInput ? evidenceSubNumInput.value.trim() : '';
+      const subNum = subNumStr ? parseInt(subNumStr, 10) : null;
+      const useDai = evidenceUseDai ? evidenceUseDai.checked : false;
+      const titleStr = evidenceTitleInput ? evidenceTitleInput.value.trim() : '';
+      const allPages = evidenceAllPages ? evidenceAllPages.checked : false;
+      const outputSheet = evidenceOutputSheet ? evidenceOutputSheet.checked : false;
+      const originalCopy = evidenceOriginalCopy ? evidenceOriginalCopy.value : '';
+      const createdDate = evidenceCreatedDate ? evidenceCreatedDate.value.trim() : '';
+      const author = evidenceAuthor ? evidenceAuthor.value.trim() : '';
+      const purpose = evidencePurpose ? evidencePurpose.value.trim() : '';
+
+      const files = evidenceUploadFiles;
+      const total = files.length;
 
       setState('processing');
       startProcessingSteps('generate');
       const results = [];
+      const sheetEntries = [];
 
       for (let i = 0; i < total; i++) {
         const currentNum = startNum + i;
-        const fullNum = toFullWidthNumber(String(currentNum));
-        const evidenceLabel = party + fullNum + '号証';
+        const currentSub = (total === 1 && subNum) ? subNum : (total > 1 ? null : subNum);
+        const evidenceLabel = buildEvidenceLabel(party, currentNum, currentSub, useDai);
         processingTitle.textContent = total > 1
           ? `証拠番号を書き込み中... (${i + 1}/${total})`
           : '証拠番号を書き込み中...';
@@ -1772,26 +1867,47 @@
 
         try {
           const result = await generateEvidenceBrowser(files[i], {
-            evidenceLabel: evidenceLabel,
-            evidenceTitle: titleStr,
+            evidenceLabel, evidenceTitle: titleStr, allPages,
           });
           const blobUrl = URL.createObjectURL(result.blob);
           results.push({ fileName: result.fileName, downloadUrl: blobUrl, error: null });
+          sheetEntries.push({
+            label: evidenceLabel,
+            title: titleStr,
+            originalOrCopy: originalCopy,
+            createdDate: createdDate,
+            author: author,
+            purpose: purpose,
+          });
         } catch (err) {
           results.push({ fileName: files[i].name, downloadUrl: null, error: err.message || '生成失敗' });
         }
+      }
+
+      // 証拠説明書の生成
+      if (outputSheet && sheetEntries.length > 0) {
+        const partyLabel = party.startsWith('甲') ? '原告' : party.startsWith('乙') ? '被告' : '';
+        const sheetBlob = generateEvidenceSheet(sheetEntries, partyLabel);
+        const sheetUrl = URL.createObjectURL(sheetBlob);
+        results.push({
+          fileName: '証拠説明書.xls',
+          downloadUrl: sheetUrl,
+          error: null,
+          isSheet: true,
+        });
       }
 
       resetProcessingSteps();
       [procStep1, procStep2, procStep3].forEach(step => { if (step) step.classList.add('done'); });
       const succeeded = results.filter(r => !r.error);
       const failed = results.filter(r => r.error);
+      const pdfCount = succeeded.filter(r => !r.isSheet).length;
       completeTitle.textContent = total === 1
         ? '証拠番号の書き込みが完了しました'
-        : `証拠番号の書き込みが完了しました（${succeeded.length}/${total}件）`;
+        : `証拠番号の書き込みが完了しました（${pdfCount}/${total}件）`;
       outputFileName.textContent = '';
 
-      if (total === 1 && succeeded.length === 1) {
+      if (succeeded.length === 1 && !outputSheet) {
         singleDownloadArea.style.display = '';
         multiDownloadArea.style.display = 'none';
         downloadLabel.textContent = 'PDFファイルをダウンロード';
@@ -1807,7 +1923,10 @@
               <span style="font-size:0.8em;color:#dc2626;">失敗: ${r.error}</span>
             </li>`;
           }
-          return `<li style="display:flex;align-items:center;gap:8px;padding:8px 12px;background:#f0fdf4;border-radius:8px;">
+          const bgColor = r.isSheet ? '#eff6ff' : '#f0fdf4';
+          const icon = r.isSheet ? '📋' : '📄';
+          return `<li style="display:flex;align-items:center;gap:8px;padding:8px 12px;background:${bgColor};border-radius:8px;">
+            <span style="font-size:1.1em;">${icon}</span>
             <span style="flex:1;font-size:0.85em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text-primary);">${r.fileName}</span>
             <a href="${r.downloadUrl}" download="${r.fileName}" class="btn btn-primary" style="padding:6px 14px;font-size:0.82em;white-space:nowrap;">
               ダウンロード
@@ -1820,7 +1939,7 @@
         showError(`${failed.length}件の生成に失敗しました: ${failed.map(r=>r.fileName).join(', ')}`);
       }
       setState('complete');
-      if (succeeded.length > 0) setTimeout(launchConfetti, 300);
+      if (pdfCount > 0) setTimeout(launchConfetti, 300);
     });
   }
 
