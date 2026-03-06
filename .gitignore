@@ -1,38 +1,19 @@
-# 個人情報・設定
-config.json
-
-# 印鑑画像（個人の印影）
-seal/
-
-# Node.js
-node_modules/
-
-# 出力・一時ファイル
-output/
-tmp/
-temp_*/
-nul
-
-# サンプルPDF・個人文書
-*.pdf
-stamp.bmp
-
-# VBSスクリプト
-*.vbs
-
-# テンプレート（個人文書）- ルート直下のみ
-/template/
-
-# docs/（GitHub Pages公開用）は追跡する
-!docs/
-!docs/**
-
-# ログ
-system/last_run.log
-
 # OS
 Thumbs.db
 .DS_Store
 
 # Claude Code
 .claude/
+
+# Node.js
+node_modules/
+
+# 一時ファイル・出力
+output/
+tmp/
+temp_*/
+nul
+
+# 個人ファイル（印鑑等）
+seal/
+*.bmp
