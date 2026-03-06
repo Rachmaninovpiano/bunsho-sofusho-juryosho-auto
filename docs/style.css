@@ -92,6 +92,7 @@ body {
   box-shadow: var(--shadow-sm);
 }
 .mode-btn.active[data-mode="receipt"] { color: #059669; }
+.mode-btn.active[data-mode="evidence"] { color: #dc2626; }
 
 /* ===== 受領書モード ===== */
 .receipt-date-hint {
@@ -115,6 +116,9 @@ body {
 /* ===== ロゴ色変更（受領書モード） ===== */
 .logo-icon.receipt-mode {
   background: linear-gradient(135deg, #059669, #10b981, #34d399);
+}
+.logo-icon.evidence-mode {
+  background: linear-gradient(135deg, #dc2626, #ef4444, #f87171);
 }
 
 /* ===== ステップナビ ===== */

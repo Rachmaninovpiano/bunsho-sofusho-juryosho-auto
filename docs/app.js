@@ -1051,12 +1051,80 @@
   }
 
   // =============================================
+  // Section 7: 証拠番号つくる君 PDF生成
+  // =============================================
+
+  /**
+   * 証拠番号と証拠説明書用の標目（タイトル）をPDFの1枚目右上に赤字でスタンプする。
+   * @param {File} file - 入力PDFファイル
+   * @param {Object} opts
+   * @param {string} opts.evidenceLabel - 例: "甲１号証", "乙B２号証"
+   * @param {string} [opts.evidenceTitle] - 例: "契約書", "メール"（任意）
+   * @returns {Promise<{blob: Blob, fileName: string}>}
+   */
+  async function generateEvidenceBrowser(file, opts) {
+    const { evidenceLabel, evidenceTitle } = opts;
+    const pdfArrayBuffer = await file.arrayBuffer();
+    const pdfDoc = await PDFLib.PDFDocument.load(pdfArrayBuffer);
+    pdfDoc.registerFontkit(fontkit);
+
+    const fontResp = await fetch('fonts/NotoSerifJP.ttf');
+    const fontBytes = await fontResp.arrayBuffer();
+    const font = await pdfDoc.embedFont(fontBytes, { subset: false });
+
+    const page = pdfDoc.getPage(0);
+    const { width: pgW, height: pgH } = page.getSize();
+    const { rgb } = PDFLib;
+
+    const margin = 36; // 右端からのマージン（約12.7mm）
+    const topMargin = 36; // 上端からのマージン
+
+    // 証拠番号を描画（赤字、28pt、右上）
+    const labelSize = 28;
+    const labelWidth = font.widthOfTextAtSize(evidenceLabel, labelSize);
+    const labelX = pgW - margin - labelWidth;
+    const labelY = pgH - topMargin - labelSize;
+
+    page.drawText(evidenceLabel, {
+      x: labelX,
+      y: labelY,
+      size: labelSize,
+      font: font,
+      color: rgb(1, 0, 0),
+    });
+
+    // 標目（タイトル）を描画（証拠番号の下、小さめ、赤字）
+    if (evidenceTitle && evidenceTitle.trim()) {
+      const titleSize = 16;
+      const titleText = '（' + evidenceTitle.trim() + '）';
+      const titleWidth = font.widthOfTextAtSize(titleText, titleSize);
+      const titleX = pgW - margin - titleWidth;
+      const titleY = labelY - titleSize - 6;
+
+      page.drawText(titleText, {
+        x: titleX,
+        y: titleY,
+        size: titleSize,
+        font: font,
+        color: rgb(1, 0, 0),
+      });
+    }
+
+    const savedBytes = await pdfDoc.save();
+    const blob = new Blob([savedBytes], { type: 'application/pdf' });
+    const baseName = file.name.replace(/\.pdf$/i, '');
+    const fileName = `${baseName}_${evidenceLabel}.pdf`;
+    return { blob, fileName };
+  }
+
+  // =============================================
   // Section 6: UIコントローラー
   // =============================================
 
   let currentState = 'upload';
   let currentMode = 'sofusho';
   let receiptUploadFiles = [];
+  let evidenceUploadFiles = [];
 
   const $ = (sel) => document.querySelector(sel);
   const $$ = (sel) => document.querySelectorAll(sel);
@@ -1066,6 +1134,7 @@
     processing: $('#state-processing'),
     confirm: $('#state-confirm'),
     'receipt-confirm': $('#state-receipt-confirm'),
+    'evidence-confirm': $('#state-evidence-confirm'),
     complete: $('#state-complete'),
   };
 
@@ -1110,6 +1179,7 @@
 
   const modeSofushoBtn = $('#modeSofusho');
   const modeReceiptBtn = $('#modeReceipt');
+  const modeEvidenceBtn = $('#modeEvidence');
   const appTitle = $('#appTitle');
   const logoIcon = $('#logoIcon');
   const completeTitle = $('#completeTitle');
@@ -1131,7 +1201,7 @@
   function setState(newState) {
     states[currentState].classList.remove('active');
     const stateOrder = ['upload', 'processing', 'confirm', 'complete'];
-    const mapState = newState === 'receipt-confirm' ? 'confirm' : newState;
+    const mapState = (newState === 'receipt-confirm' || newState === 'evidence-confirm') ? 'confirm' : newState;
     const newIndex = stateOrder.indexOf(mapState);
     const stepElements = $$('.step');
     const connectorFills = $$('.step-connector-fill');
@@ -1242,6 +1312,8 @@
     }
     if (currentMode === 'receipt') {
       prepareReceiptFiles(pdfs);
+    } else if (currentMode === 'evidence') {
+      prepareEvidenceFiles(pdfs);
     } else {
       uploadFiles(pdfs);
     }
@@ -1471,6 +1543,7 @@
   // --- 新規ファイルボタン ---
   btnNewFile.addEventListener('click', () => {
     receiptUploadFiles = [];
+    evidenceUploadFiles = [];
     completeTitle.textContent = '文書送付書の生成が完了しました';
     downloadLabel.textContent = 'Wordファイルをダウンロード';
     setState('upload');
@@ -1481,22 +1554,30 @@
     currentMode = mode;
     modeSofushoBtn.classList.toggle('active', mode === 'sofusho');
     modeReceiptBtn.classList.toggle('active', mode === 'receipt');
+    if (modeEvidenceBtn) modeEvidenceBtn.classList.toggle('active', mode === 'evidence');
+    logoIcon.classList.remove('receipt-mode', 'evidence-mode');
     if (mode === 'receipt') {
       appTitle.textContent = '受領書自動でつくる君';
       logoIcon.classList.add('receipt-mode');
       uploadHeading.textContent = '相手方の文書送付書PDFをドロップ';
       uploadDesc.textContent = '受領日・署名・押印を自動で書き込みます';
+    } else if (mode === 'evidence') {
+      appTitle.textContent = '証拠番号つくる君';
+      logoIcon.classList.add('evidence-mode');
+      uploadHeading.textContent = '証拠PDFをドロップ';
+      uploadDesc.textContent = '証拠番号と標目を右上に赤字でスタンプします';
     } else {
       appTitle.textContent = '文書送付書自動でつくる君';
-      logoIcon.classList.remove('receipt-mode');
       uploadHeading.textContent = 'FAX送信書のPDFをドロップ';
       uploadDesc.textContent = 'ファイルをここにドラッグ＆ドロップしてください';
     }
     receiptUploadFiles = [];
+    evidenceUploadFiles = [];
     setState('upload');
   }
   modeSofushoBtn.addEventListener('click', () => switchMode('sofusho'));
   modeReceiptBtn.addEventListener('click', () => switchMode('receipt'));
+  if (modeEvidenceBtn) modeEvidenceBtn.addEventListener('click', () => switchMode('evidence'));
 
   // --- 受領書モード: 複数ファイルを確認画面に表示 ---
   function prepareReceiptFiles(pdfs) {
@@ -1595,6 +1676,153 @@
     setState('complete');
     if (succeeded.length > 0) setTimeout(launchConfetti, 300);
   });
+
+  // --- 証拠番号モード: ファイル準備 ---
+  const evidencePartySelect = $('#evidenceParty');
+  const evidenceNumberInput = $('#evidenceNumber');
+  const evidenceTitleInput = $('#evidenceTitle');
+  const evidencePreview = $('#evidencePreview');
+  const evidenceSourceFileName = $('#evidenceSourceFileName');
+  const btnEvidenceBack = $('#btnEvidenceBack');
+  const btnEvidenceGenerate = $('#btnEvidenceGenerate');
+  const evidenceFileCountBadge = $('#evidenceFileCountBadge');
+  const evidenceFileListWrap = $('#evidenceFileListWrap');
+  const evidenceFileList = $('#evidenceFileList');
+
+  function buildEvidenceLabel() {
+    const party = evidencePartySelect ? evidencePartySelect.value : '甲';
+    const num = evidenceNumberInput ? evidenceNumberInput.value.trim() : '';
+    if (!num) return party + '○号証';
+    const fullNum = toFullWidthNumber(num);
+    return party + fullNum + '号証';
+  }
+
+  function updateEvidencePreview() {
+    if (evidencePreview) {
+      evidencePreview.textContent = buildEvidenceLabel();
+    }
+  }
+
+  if (evidencePartySelect) evidencePartySelect.addEventListener('change', updateEvidencePreview);
+  if (evidenceNumberInput) evidenceNumberInput.addEventListener('input', updateEvidencePreview);
+
+  function prepareEvidenceFiles(pdfs) {
+    evidenceUploadFiles = pdfs;
+    if (evidenceSourceFileName) {
+      evidenceSourceFileName.textContent = pdfs.length === 1
+        ? pdfs[0].name
+        : `${pdfs.length}件のPDFを処理します`;
+    }
+    if (evidenceFileCountBadge) {
+      evidenceFileCountBadge.textContent = pdfs.length > 1 ? `${pdfs.length}件` : '証拠番号モード';
+    }
+    if (evidenceFileListWrap && evidenceFileList) {
+      if (pdfs.length > 1) {
+        evidenceFileList.innerHTML = pdfs.map(f => `<li>${f.name}</li>`).join('');
+        evidenceFileListWrap.style.display = 'block';
+      } else {
+        evidenceFileListWrap.style.display = 'none';
+      }
+    }
+    updateEvidencePreview();
+    setState('evidence-confirm');
+  }
+
+  if (btnEvidenceBack) {
+    btnEvidenceBack.addEventListener('click', () => {
+      evidenceUploadFiles = [];
+      setState('upload');
+    });
+  }
+
+  if (btnEvidenceGenerate) {
+    btnEvidenceGenerate.addEventListener('click', async () => {
+      if (!evidenceUploadFiles || evidenceUploadFiles.length === 0) {
+        showError('ファイルが選択されていません。');
+        setState('upload');
+        return;
+      }
+      const party = evidencePartySelect ? evidencePartySelect.value : '甲';
+      const numStr = evidenceNumberInput ? evidenceNumberInput.value.trim() : '';
+      if (!numStr) {
+        showError('証拠番号を入力してください。');
+        return;
+      }
+      const titleStr = evidenceTitleInput ? evidenceTitleInput.value.trim() : '';
+      const files = evidenceUploadFiles;
+      const total = files.length;
+      const startNum = parseInt(numStr, 10);
+      if (isNaN(startNum) || startNum < 1) {
+        showError('証拠番号は1以上の数字を入力してください。');
+        return;
+      }
+
+      setState('processing');
+      startProcessingSteps('generate');
+      const results = [];
+
+      for (let i = 0; i < total; i++) {
+        const currentNum = startNum + i;
+        const fullNum = toFullWidthNumber(String(currentNum));
+        const evidenceLabel = party + fullNum + '号証';
+        processingTitle.textContent = total > 1
+          ? `証拠番号を書き込み中... (${i + 1}/${total})`
+          : '証拠番号を書き込み中...';
+        processingMessage.textContent = `${files[i].name} → ${evidenceLabel}`;
+
+        try {
+          const result = await generateEvidenceBrowser(files[i], {
+            evidenceLabel: evidenceLabel,
+            evidenceTitle: titleStr,
+          });
+          const blobUrl = URL.createObjectURL(result.blob);
+          results.push({ fileName: result.fileName, downloadUrl: blobUrl, error: null });
+        } catch (err) {
+          results.push({ fileName: files[i].name, downloadUrl: null, error: err.message || '生成失敗' });
+        }
+      }
+
+      resetProcessingSteps();
+      [procStep1, procStep2, procStep3].forEach(step => { if (step) step.classList.add('done'); });
+      const succeeded = results.filter(r => !r.error);
+      const failed = results.filter(r => r.error);
+      completeTitle.textContent = total === 1
+        ? '証拠番号の書き込みが完了しました'
+        : `証拠番号の書き込みが完了しました（${succeeded.length}/${total}件）`;
+      outputFileName.textContent = '';
+
+      if (total === 1 && succeeded.length === 1) {
+        singleDownloadArea.style.display = '';
+        multiDownloadArea.style.display = 'none';
+        downloadLabel.textContent = 'PDFファイルをダウンロード';
+        btnDownload.href = succeeded[0].downloadUrl;
+        btnDownload.download = succeeded[0].fileName;
+      } else {
+        singleDownloadArea.style.display = 'none';
+        multiDownloadArea.style.display = '';
+        downloadList.innerHTML = results.map(r => {
+          if (r.error) {
+            return `<li style="display:flex;align-items:center;gap:8px;padding:8px 12px;background:#fef2f2;border-radius:8px;color:#dc2626;">
+              <span style="flex:1;font-size:0.85em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${r.fileName}</span>
+              <span style="font-size:0.8em;color:#dc2626;">失敗: ${r.error}</span>
+            </li>`;
+          }
+          return `<li style="display:flex;align-items:center;gap:8px;padding:8px 12px;background:#f0fdf4;border-radius:8px;">
+            <span style="flex:1;font-size:0.85em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text-primary);">${r.fileName}</span>
+            <a href="${r.downloadUrl}" download="${r.fileName}" class="btn btn-primary" style="padding:6px 14px;font-size:0.82em;white-space:nowrap;">
+              ダウンロード
+            </a>
+          </li>`;
+        }).join('');
+      }
+
+      if (failed.length > 0) {
+        showError(`${failed.length}件の生成に失敗しました: ${failed.map(r=>r.fileName).join(', ')}`);
+      }
+      setState('complete');
+      if (succeeded.length > 0) setTimeout(launchConfetti, 300);
+    });
+  }
 
   // --- 設定モーダル ---
   if (settingsBtn && settingsModal) {
@@ -1698,7 +1926,7 @@
 
   // --- ページ離脱前の確認 ---
   window.addEventListener('beforeunload', (e) => {
-    if (currentState === 'confirm' || currentState === 'receipt-confirm') {
+    if (currentState === 'confirm' || currentState === 'receipt-confirm' || currentState === 'evidence-confirm') {
       e.preventDefault();
       e.returnValue = '';
     }
