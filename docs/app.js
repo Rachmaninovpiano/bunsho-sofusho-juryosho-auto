@@ -1093,22 +1093,66 @@
   }
 
   /**
+   * Canvasでテキストを描画し、PNG画像のバイト列を返す。
+   * フォントファイル不要でfile://プロトコルでも動作する。
+   */
+  function renderTextToImageBytes(text, fontSize, options) {
+    const opts = options || {};
+    const color = opts.color || 'red';
+    const fontFamily = opts.fontFamily || '"Yu Mincho", "游明朝", "MS Mincho", "ＭＳ 明朝", "Hiragino Mincho ProN", serif';
+    const scale = opts.scale || 4;
+    const bold = opts.bold !== false;
+
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    const fontStr = (bold ? 'bold ' : '') + (fontSize * scale) + 'px ' + fontFamily;
+
+    ctx.font = fontStr;
+    const metrics = ctx.measureText(text);
+    const pad = scale * 2;
+
+    canvas.width = Math.ceil(metrics.width) + pad * 2;
+    canvas.height = Math.ceil(fontSize * scale * 1.35) + pad;
+
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.font = fontStr;
+    ctx.fillStyle = color;
+    ctx.textBaseline = 'top';
+    ctx.fillText(text, pad, pad / 2);
+
+    const dataUrl = canvas.toDataURL('image/png');
+    const base64 = dataUrl.split(',')[1];
+    const binary = atob(base64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+
+    return { bytes: bytes, width: canvas.width / scale, height: canvas.height / scale };
+  }
+
+  /**
    * PDFの指定ページ右上に証拠番号と標目を赤字でスタンプする。
+   * Canvas描画 → PNG埋め込み方式（フォントファイル不要）。
    */
   async function generateEvidenceBrowser(file, opts) {
     const { evidenceLabel, evidenceTitle, allPages } = opts;
     const pdfArrayBuffer = await file.arrayBuffer();
     const pdfDoc = await PDFLib.PDFDocument.load(pdfArrayBuffer);
-    pdfDoc.registerFontkit(fontkit);
 
-    const fontBytes = await loadJapaneseFont();
-    const font = await pdfDoc.embedFont(fontBytes, { subset: false });
-    const { rgb } = PDFLib;
+    // 証拠番号をCanvas→PNG画像として生成
+    const labelImg = renderTextToImageBytes(evidenceLabel, 28);
+    const pdfLabelImage = await pdfDoc.embedPng(labelImg.bytes);
+
+    let pdfTitleImage = null;
+    let titleImgDims = null;
+    if (evidenceTitle && evidenceTitle.trim()) {
+      const titleText = '（' + evidenceTitle.trim() + '）';
+      const titleImg = renderTextToImageBytes(titleText, 16, { bold: false });
+      pdfTitleImage = await pdfDoc.embedPng(titleImg.bytes);
+      titleImgDims = { width: titleImg.width, height: titleImg.height };
+    }
 
     const margin = 36;
     const topMargin = 36;
-    const labelSize = 28;
-
     const pageCount = pdfDoc.getPageCount();
     const pagesToStamp = allPages
       ? Array.from({ length: pageCount }, (_, i) => i)
@@ -1118,23 +1162,19 @@
       const page = pdfDoc.getPage(pageIndex);
       const { width: pgW, height: pgH } = page.getSize();
 
-      const labelWidth = font.widthOfTextAtSize(evidenceLabel, labelSize);
-      const labelX = pgW - margin - labelWidth;
-      const labelY = pgH - topMargin - labelSize;
+      const labelX = pgW - margin - labelImg.width;
+      const labelY = pgH - topMargin - labelImg.height;
 
-      page.drawText(evidenceLabel, {
+      page.drawImage(pdfLabelImage, {
         x: labelX, y: labelY,
-        size: labelSize, font, color: rgb(1, 0, 0),
+        width: labelImg.width, height: labelImg.height,
       });
 
-      if (evidenceTitle && evidenceTitle.trim()) {
-        const titleSize = 16;
-        const titleText = '（' + evidenceTitle.trim() + '）';
-        const titleWidth = font.widthOfTextAtSize(titleText, titleSize);
-        page.drawText(titleText, {
-          x: pgW - margin - titleWidth,
-          y: labelY - titleSize - 6,
-          size: titleSize, font, color: rgb(1, 0, 0),
+      if (pdfTitleImage && titleImgDims) {
+        page.drawImage(pdfTitleImage, {
+          x: pgW - margin - titleImgDims.width,
+          y: labelY - titleImgDims.height - 4,
+          width: titleImgDims.width, height: titleImgDims.height,
         });
       }
     }
