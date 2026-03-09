@@ -17,3 +17,15 @@ nul
 # 個人ファイル（印鑑等）
 seal/
 *.bmp
+
+# Electron ビルド成果物
+アプリ版/dist/
+アプリ版/node_modules/
+
+# テスト用サンプルファイル（リポジトリに含めない）
+乙B１号証*.pdf
+証拠説明書*.docx
+
+# ルートのnpm（serve等の開発ツール用）
+/package.json
+/package-lock.json

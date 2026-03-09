@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="512" y2="512" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#4f46e5"/>
+      <stop offset="100%" stop-color="#7c3aed"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="92" fill="url(#bg)"/>
+  <rect x="90" y="60" width="240" height="320" rx="24" fill="white" fill-opacity="0.95"/>
+  <line x1="138" y1="168" x2="282" y2="168" stroke="#4f46e5" stroke-width="16" stroke-linecap="round"/>
+  <line x1="138" y1="216" x2="258" y2="216" stroke="#4f46e5" stroke-width="16" stroke-linecap="round" opacity="0.7"/>
+  <line x1="138" y1="264" x2="226" y2="264" stroke="#4f46e5" stroke-width="16" stroke-linecap="round" opacity="0.4"/>
+  <g transform="translate(340, 260) rotate(-35)">
+    <rect x="-18" y="-128" width="36" height="160" rx="10" fill="#fbbf24"/>
+    <rect x="-18" y="-128" width="36" height="36" rx="8" fill="#f97316"/>
+    <polygon points="0,48 -22,96 22,96" fill="#fbbf24"/>
+  </g>
+  <circle cx="170" cy="420" r="48" fill="#34d399"/>
+  <polyline points="142,420 162,440 198,404" stroke="white" stroke-width="14" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+</svg>

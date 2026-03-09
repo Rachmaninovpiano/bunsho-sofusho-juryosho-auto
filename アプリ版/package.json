@@ -1,0 +1,59 @@
+{
+  "name": "tsukurukun",
+  "version": "1.0.0",
+  "description": "自動でつくる君 - 文書送付書・受領書・証拠番号自動生成デスクトップアプリ",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "build:win": "electron-builder --win",
+    "build:mac": "electron-builder --mac",
+    "build:all": "electron-builder --win --mac"
+  },
+  "build": {
+    "appId": "com.tsukurukun.app",
+    "productName": "自動でつくる君",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "app/**/*"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        },
+        {
+          "target": "portable",
+          "arch": ["x64"]
+        }
+      ],
+      "icon": "app/icons/icon.svg"
+    },
+    "mac": {
+      "target": ["dmg"],
+      "icon": "app/icons/icon.svg",
+      "category": "public.app-category.productivity"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "自動でつくる君"
+    },
+    "portable": {
+      "artifactName": "自動でつくる君_ポータブル版.exe"
+    }
+  },
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.0.0"
+  }
+}
