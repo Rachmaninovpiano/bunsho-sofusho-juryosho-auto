@@ -1,0 +1,27 @@
+{
+  "name": "自動でつくる君 - 文書送付書・受領書・証拠番号",
+  "short_name": "つくる君",
+  "description": "FAX送信書PDFから文書送付書・受領書を自動生成。証拠番号スタンプ＋証拠説明書Word出力も対応。",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#f1f5f9",
+  "theme_color": "#4f46e5",
+  "lang": "ja",
+  "categories": ["productivity", "utilities"],
+  "icons": [
+    {
+      "src": "icons/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "icons/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "maskable"
+    }
+  ]
+}

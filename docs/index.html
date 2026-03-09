@@ -3,7 +3,15 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#4f46e5">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="つくる君">
+  <meta name="description" content="FAX送信書PDFから文書送付書・受領書を自動生成。証拠番号スタンプ＋証拠説明書Word出力も対応。">
   <title>自動でつくる君 - 文書送付書・受領書・証拠番号</title>
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" type="image/svg+xml" href="icons/icon.svg">
+  <link rel="apple-touch-icon" href="icons/icon.svg">
   <link rel="stylesheet" href="style.css">
   <style>
     /* 設定ボタン */
@@ -841,5 +849,16 @@
 
   <!-- アプリケーション（統合版）-->
   <script src="app.js"></script>
+
+  <!-- PWA Service Worker 登録 -->
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('./service-worker.js')
+          .then(reg => console.log('[PWA] SW registered:', reg.scope))
+          .catch(err => console.warn('[PWA] SW registration failed:', err));
+      });
+    }
+  </script>
 </body>
 </html>

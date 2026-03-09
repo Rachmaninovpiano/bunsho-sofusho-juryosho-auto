@@ -31,11 +31,11 @@
           "arch": ["x64"]
         }
       ],
-      "icon": "app/icons/icon.svg"
+      "icon": "app/icons/icon.png"
     },
     "mac": {
       "target": ["dmg"],
-      "icon": "app/icons/icon.svg",
+      "icon": "app/icons/icon.png",
       "category": "public.app-category.productivity"
     },
     "nsis": {
