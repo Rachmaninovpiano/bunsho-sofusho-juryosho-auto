@@ -54,24 +54,119 @@
     return { year, month, day };
   }
 
-  // --- 日本語フォント読み込み（キャッシュ + CDNフォールバック） ---
+  // --- IndexedDBキャッシュ（フォント・テンプレート用）---
+  async function _idbGet(storeName, key) {
+    return new Promise(resolve => {
+      try {
+        const req = indexedDB.open('tsukurukun_cache', 1);
+        req.onupgradeneeded = e => {
+          const db = e.target.result;
+          ['fonts', 'templates'].forEach(s => {
+            if (!db.objectStoreNames.contains(s)) db.createObjectStore(s);
+          });
+        };
+        req.onsuccess = () => {
+          try {
+            const g = req.result.transaction(storeName, 'readonly').objectStore(storeName).get(key);
+            g.onsuccess = () => resolve(g.result || null);
+            g.onerror = () => resolve(null);
+          } catch (e) { resolve(null); }
+        };
+        req.onerror = () => resolve(null);
+      } catch (e) { resolve(null); }
+    });
+  }
+
+  async function _idbPut(storeName, key, value) {
+    try {
+      const req = indexedDB.open('tsukurukun_cache', 1);
+      req.onupgradeneeded = e => {
+        const db = e.target.result;
+        ['fonts', 'templates'].forEach(s => {
+          if (!db.objectStoreNames.contains(s)) db.createObjectStore(s);
+        });
+      };
+      req.onsuccess = () => {
+        try { req.result.transaction(storeName, 'readwrite').objectStore(storeName).put(value, key); }
+        catch (e) { /* ignore */ }
+      };
+    } catch (e) { /* ignore */ }
+  }
+
+  // --- 日本語フォント読み込み（IndexedDBキャッシュ + CDN + ファイル選択フォールバック）---
   let _cachedFontBytes = null;
   async function loadJapaneseFont() {
     if (_cachedFontBytes) return _cachedFontBytes;
+
+    // 1. IndexedDBキャッシュ
+    const cached = await _idbGet('fonts', 'NotoSerifJP');
+    if (cached) {
+      console.log('[フォント] IndexedDBキャッシュから読み込み');
+      _cachedFontBytes = cached;
+      return _cachedFontBytes;
+    }
+
+    // 2. fetch（ローカル → CDN）
     const urls = [
       'fonts/NotoSerifJP.ttf',
       'https://cdn.jsdelivr.net/gh/Rachmaninovpiano/bunsho-sofusho-juryosho-auto@master/docs/fonts/NotoSerifJP.ttf',
     ];
     for (const url of urls) {
       try {
+        console.log('[フォント] 読み込み試行:', url);
         const resp = await fetch(url);
         if (resp.ok) {
           _cachedFontBytes = await resp.arrayBuffer();
+          console.log('[フォント] 読み込み成功:', url, _cachedFontBytes.byteLength, 'bytes');
+          await _idbPut('fonts', 'NotoSerifJP', _cachedFontBytes);
           return _cachedFontBytes;
+        }
+      } catch (e) {
+        console.warn('[フォント] 読み込み失敗:', url, e.message);
+        continue;
+      }
+    }
+
+    // 3. ファイル選択ダイアログ（file://プロトコル用）
+    return new Promise((resolve, reject) => {
+      alert('フォントの自動読み込みに失敗しました。\n\nfonts/NotoSerifJP.ttf を手動で選択してください。\n（一度選択すると次回以降はキャッシュされます）');
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = '.ttf,.otf';
+      input.onchange = async () => {
+        if (!input.files[0]) { reject(new Error('フォントが選択されませんでした')); return; }
+        _cachedFontBytes = await input.files[0].arrayBuffer();
+        await _idbPut('fonts', 'NotoSerifJP', _cachedFontBytes);
+        console.log('[フォント] ファイル選択で読み込み成功、キャッシュ保存');
+        resolve(_cachedFontBytes);
+      };
+      input.click();
+    });
+  }
+
+  // --- テンプレート読み込み（CDNフォールバック + キャッシュ）---
+  async function loadTemplate(localPath, cdnPath, cacheKey) {
+    // 1. IndexedDBキャッシュ
+    const cached = await _idbGet('templates', cacheKey);
+    if (cached) {
+      console.log('[テンプレート] キャッシュから読み込み:', cacheKey);
+      return cached;
+    }
+    // 2. fetch（ローカル → CDN）
+    const urls = [localPath];
+    if (cdnPath) urls.push(cdnPath);
+    for (const url of urls) {
+      try {
+        const resp = await fetch(url);
+        if (resp.ok) {
+          const data = await resp.arrayBuffer();
+          await _idbPut('templates', cacheKey, data);
+          console.log('[テンプレート] 読み込み成功:', url);
+          return data;
         }
       } catch (e) { continue; }
     }
-    throw new Error('日本語フォントの読み込みに失敗しました。GitHub Pagesでお試しください。');
+    throw new Error('テンプレートの読み込みに失敗しました: ' + cacheKey);
   }
 
   // =============================================
@@ -709,11 +804,11 @@
 
   async function generateDocumentBrowser(info, documentTitle, onProgress) {
     onProgress && onProgress('テンプレートを読み込み中...');
-    const templateResp = await fetch('template/文書送付書.doc.docx');
-    if (!templateResp.ok) {
-      throw new Error('テンプレートファイルの読み込みに失敗しました。');
-    }
-    const templateData = await templateResp.arrayBuffer();
+    const templateData = await loadTemplate(
+      'template/文書送付書.doc.docx',
+      'https://cdn.jsdelivr.net/gh/Rachmaninovpiano/bunsho-sofusho-juryosho-auto@master/docs/template/%E6%96%87%E6%9B%B8%E9%80%81%E4%BB%98%E6%9B%B8.doc.docx',
+      'sofusho_template'
+    );
     onProgress && onProgress('テンプレートにデータを差し込み中...');
     const zip = await JSZip.loadAsync(templateData);
     let docXml = await zip.file('word/document.xml').async('string');
@@ -1075,6 +1170,7 @@
 
   /**
    * 証拠番号ラベルを組み立てる。
+   * 弁護革命互換: {code}{第?}{num}号証{の枝番?}
    * @param {string} party - 甲, 乙, 丙, 甲A, 乙B 等
    * @param {number} num - 号証番号
    * @param {number|null} subNum - 枝番（null = なし）
@@ -1092,89 +1188,69 @@
     return label;
   }
 
-  /**
-   * Canvasでテキストを描画し、PNG画像のバイト列を返す。
-   * フォントファイル不要でfile://プロトコルでも動作する。
-   */
-  function renderTextToImageBytes(text, fontSize, options) {
-    const opts = options || {};
-    const color = opts.color || 'red';
-    const fontFamily = opts.fontFamily || '"Yu Mincho", "游明朝", "MS Mincho", "ＭＳ 明朝", "Hiragino Mincho ProN", serif';
-    const scale = opts.scale || 4;
-    const bold = opts.bold !== false;
-
-    const canvas = document.createElement('canvas');
-    const ctx = canvas.getContext('2d');
-    const fontStr = (bold ? 'bold ' : '') + (fontSize * scale) + 'px ' + fontFamily;
-
-    ctx.font = fontStr;
-    const metrics = ctx.measureText(text);
-    const pad = scale * 2;
-
-    canvas.width = Math.ceil(metrics.width) + pad * 2;
-    canvas.height = Math.ceil(fontSize * scale * 1.35) + pad;
-
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.font = fontStr;
-    ctx.fillStyle = color;
-    ctx.textBaseline = 'top';
-    ctx.fillText(text, pad, pad / 2);
-
-    const dataUrl = canvas.toDataURL('image/png');
-    const base64 = dataUrl.split(',')[1];
-    const binary = atob(base64);
-    const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-
-    return { bytes: bytes, width: canvas.width / scale, height: canvas.height / scale };
+  /** XML特殊文字エスケープ */
+  function escXml(str) {
+    return String(str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   }
 
   /**
-   * PDFの指定ページ右上に証拠番号と標目を赤字でスタンプする。
-   * Canvas描画 → PNG埋め込み方式（フォントファイル不要）。
+   * PDFの指定ページ右上に証拠番号と標目を赤字ベクターテキストでスタンプ。
+   * drawText()方式: PDF上のテキストが編集可能。
+   * 弁護革命準拠: 右上余白に赤字で証拠番号を配置。
    */
   async function generateEvidenceBrowser(file, opts) {
-    const { evidenceLabel, evidenceTitle, allPages } = opts;
+    const { evidenceLabel, evidenceTitle, allPages, onProgress } = opts;
+    onProgress && onProgress('PDFを読み込み中...');
     const pdfArrayBuffer = await file.arrayBuffer();
     const pdfDoc = await PDFLib.PDFDocument.load(pdfArrayBuffer);
+    pdfDoc.registerFontkit(fontkit);
 
-    // 証拠番号をCanvas→PNG画像として生成
-    const labelImg = renderTextToImageBytes(evidenceLabel, 28);
-    const pdfLabelImage = await pdfDoc.embedPng(labelImg.bytes);
-
-    let pdfTitleImage = null;
-    let titleImgDims = null;
-    if (evidenceTitle && evidenceTitle.trim()) {
-      const titleText = '（' + evidenceTitle.trim() + '）';
-      const titleImg = renderTextToImageBytes(titleText, 16, { bold: false });
-      pdfTitleImage = await pdfDoc.embedPng(titleImg.bytes);
-      titleImgDims = { width: titleImg.width, height: titleImg.height };
-    }
+    onProgress && onProgress('フォントを読み込み中...');
+    const fontBytes = await loadJapaneseFont();
+    const font = await pdfDoc.embedFont(fontBytes, { subset: false });
 
     const margin = 36;
-    const topMargin = 36;
+    const topMargin = 30;
+    const labelFontSize = 20;
+    const titleFontSize = 12;
+    const { rgb } = PDFLib;
+    const red = rgb(0.86, 0.15, 0.15);
+
     const pageCount = pdfDoc.getPageCount();
     const pagesToStamp = allPages
       ? Array.from({ length: pageCount }, (_, i) => i)
       : [0];
 
+    onProgress && onProgress('証拠番号を書き込み中...');
     for (const pageIndex of pagesToStamp) {
       const page = pdfDoc.getPage(pageIndex);
       const { width: pgW, height: pgH } = page.getSize();
 
-      const labelX = pgW - margin - labelImg.width;
-      const labelY = pgH - topMargin - labelImg.height;
+      // A3横向き対応: 横長ならば右上に配置（弁護革命準拠）
+      const isLandscape = pgW > pgH;
+      const effectiveMargin = isLandscape ? margin + 10 : margin;
 
-      page.drawImage(pdfLabelImage, {
+      // 証拠番号ラベル（赤字）
+      const labelWidth = font.widthOfTextAtSize(evidenceLabel, labelFontSize);
+      const labelX = pgW - effectiveMargin - labelWidth;
+      const labelY = pgH - topMargin - labelFontSize;
+
+      page.drawText(evidenceLabel, {
         x: labelX, y: labelY,
-        width: labelImg.width, height: labelImg.height,
+        size: labelFontSize, font, color: red,
       });
 
-      if (pdfTitleImage && titleImgDims) {
-        page.drawImage(pdfTitleImage, {
-          x: pgW - margin - titleImgDims.width,
-          y: labelY - titleImgDims.height - 4,
-          width: titleImgDims.width, height: titleImgDims.height,
+      // 標目（括弧付き・小さめ赤字）
+      if (evidenceTitle && evidenceTitle.trim()) {
+        const titleText = '（' + evidenceTitle.trim() + '）';
+        const titleWidth = font.widthOfTextAtSize(titleText, titleFontSize);
+        const titleX = pgW - effectiveMargin - titleWidth;
+        const titleY = labelY - titleFontSize - 6;
+
+        page.drawText(titleText, {
+          x: titleX, y: titleY,
+          size: titleFontSize, font, color: red,
         });
       }
     }
@@ -1187,41 +1263,167 @@
   }
 
   /**
-   * 証拠説明書をExcel互換HTML形式(.xls)で生成する。
+   * 証拠説明書をWord(.docx)形式で生成する。
+   * 裁判所標準書式: 号証 | 標目(原本/写し) | 作成年月日 | 作成者 | 立証趣旨
    * @param {Array} entries - [{label, title, originalOrCopy, createdDate, author, purpose}]
-   * @param {string} partyRole - "原告" or "被告" 等
-   * @returns {Blob}
+   * @param {Object} options - { party }
+   * @returns {Promise<Blob>}
    */
-  function generateEvidenceSheet(entries, partyRole) {
-    const rows = entries.map(e => `<tr>
-      <td style="text-align:center;white-space:nowrap;">${e.label}</td>
-      <td>${e.title || ''}</td>
-      <td style="text-align:center;">${e.originalOrCopy || ''}</td>
-      <td style="text-align:center;white-space:nowrap;">${e.createdDate || ''}</td>
-      <td style="text-align:center;">${e.author || ''}</td>
-      <td>${e.purpose || ''}</td>
-    </tr>`).join('\n');
+  async function generateEvidenceSheetDocx(entries, options) {
+    const opts = options || {};
+    const party = opts.party || '甲';
+    const today = getTodayReiwa();
+    const dateStr = `令和${today.year}年${today.month}月${today.day}日`;
+    const titleLabel = `証拠説明書（${party}号証）`;
 
-    const html = `<html xmlns:o="urn:schemas-microsoft-com:office:office"
-xmlns:x="urn:schemas-microsoft-com:office:excel">
-<head><meta charset="UTF-8">
-<style>
-  table { border-collapse: collapse; font-family: 'ＭＳ 明朝','MS Mincho',serif; font-size: 11pt; width: 100%; }
-  th, td { border: 1px solid #000; padding: 4px 8px; vertical-align: top; }
-  th { background: #f0f0f0; font-weight: bold; text-align: center; }
-  .title { font-size: 14pt; font-weight: bold; text-align: center; margin-bottom: 8px; }
-  .party { text-align: right; margin-bottom: 4px; font-size: 11pt; }
-</style>
-</head><body>
-<p class="title">証拠説明書</p>
-<p class="party">${partyRole || ''}</p>
-<table>
-<tr><th style="width:12%;">号証</th><th style="width:20%;">標目</th><th style="width:10%;">原本・写し<br>の別</th><th style="width:12%;">作成日</th><th style="width:12%;">作成者</th><th style="width:34%;">立証趣旨</th></tr>
-${rows}
-</table>
-</body></html>`;
+    // テーブルヘッダー行
+    const headerRow = [
+      '<w:tr>',
+      '<w:tc><w:tcPr><w:tcW w:w="1100" w:type="dxa"/></w:tcPr>',
+      '<w:p><w:pPr><w:jc w:val="center"/></w:pPr>',
+      '<w:r><w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman" w:hint="eastAsia"/><w:b/><w:sz w:val="22"/></w:rPr>',
+      '<w:t>号証</w:t></w:r></w:p></w:tc>',
+      '<w:tc><w:tcPr><w:tcW w:w="2800" w:type="dxa"/><w:gridSpan w:val="2"/></w:tcPr>',
+      '<w:p><w:pPr><w:jc w:val="center"/></w:pPr>',
+      '<w:r><w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman" w:hint="eastAsia"/><w:b/><w:sz w:val="22"/></w:rPr>',
+      '<w:t xml:space="preserve">標　　　目</w:t></w:r></w:p>',
+      '<w:p><w:pPr><w:jc w:val="center"/></w:pPr>',
+      '<w:r><w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman" w:hint="eastAsia"/><w:sz w:val="20"/></w:rPr>',
+      '<w:t>（原本・写しの別）</w:t></w:r></w:p></w:tc>',
+      '<w:tc><w:tcPr><w:tcW w:w="1200" w:type="dxa"/></w:tcPr>',
+      '<w:p><w:pPr><w:jc w:val="center"/></w:pPr>',
+      '<w:r><w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman" w:hint="eastAsia"/><w:b/><w:sz w:val="22"/></w:rPr>',
+      '<w:t>作　成</w:t></w:r></w:p>',
+      '<w:p><w:pPr><w:jc w:val="center"/></w:pPr>',
+      '<w:r><w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman" w:hint="eastAsia"/><w:b/><w:sz w:val="22"/></w:rPr>',
+      '<w:t>年月日</w:t></w:r></w:p></w:tc>',
+      '<w:tc><w:tcPr><w:tcW w:w="1200" w:type="dxa"/></w:tcPr>',
+      '<w:p><w:pPr><w:jc w:val="center"/></w:pPr>',
+      '<w:r><w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman" w:hint="eastAsia"/><w:b/><w:sz w:val="22"/></w:rPr>',
+      '<w:t>作成者</w:t></w:r></w:p></w:tc>',
+      '<w:tc><w:tcPr><w:tcW w:w="3200" w:type="dxa"/></w:tcPr>',
+      '<w:p><w:pPr><w:jc w:val="center"/></w:pPr>',
+      '<w:r><w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman" w:hint="eastAsia"/><w:b/><w:sz w:val="22"/></w:rPr>',
+      '<w:t>立証趣旨</w:t></w:r></w:p></w:tc>',
+      '</w:tr>',
+    ].join('');
 
-    return new Blob(['\ufeff' + html], { type: 'application/vnd.ms-excel;charset=utf-8' });
+    // データ行
+    const dataRows = entries.map(e => [
+      '<w:tr><w:trPr><w:trHeight w:val="500"/></w:trPr>',
+      '<w:tc><w:tcPr><w:tcW w:w="1100" w:type="dxa"/><w:vAlign w:val="center"/></w:tcPr>',
+      '<w:p><w:pPr><w:jc w:val="center"/></w:pPr>',
+      '<w:r><w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman" w:hint="eastAsia"/><w:sz w:val="22"/></w:rPr>',
+      '<w:t>' + escXml(e.label) + '</w:t></w:r></w:p></w:tc>',
+      '<w:tc><w:tcPr><w:tcW w:w="2000" w:type="dxa"/><w:vAlign w:val="center"/></w:tcPr>',
+      '<w:p><w:r><w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman" w:hint="eastAsia"/><w:sz w:val="22"/></w:rPr>',
+      '<w:t>' + escXml(e.title || '') + '</w:t></w:r></w:p></w:tc>',
+      '<w:tc><w:tcPr><w:tcW w:w="800" w:type="dxa"/><w:vAlign w:val="center"/></w:tcPr>',
+      '<w:p><w:pPr><w:jc w:val="center"/></w:pPr>',
+      '<w:r><w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman" w:hint="eastAsia"/><w:sz w:val="22"/></w:rPr>',
+      '<w:t>' + escXml(e.originalOrCopy || '') + '</w:t></w:r></w:p></w:tc>',
+      '<w:tc><w:tcPr><w:tcW w:w="1200" w:type="dxa"/><w:vAlign w:val="center"/></w:tcPr>',
+      '<w:p><w:pPr><w:jc w:val="center"/></w:pPr>',
+      '<w:r><w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman" w:hint="eastAsia"/><w:sz w:val="22"/></w:rPr>',
+      '<w:t>' + escXml(e.createdDate || '') + '</w:t></w:r></w:p></w:tc>',
+      '<w:tc><w:tcPr><w:tcW w:w="1200" w:type="dxa"/><w:vAlign w:val="center"/></w:tcPr>',
+      '<w:p><w:pPr><w:jc w:val="center"/></w:pPr>',
+      '<w:r><w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman" w:hint="eastAsia"/><w:sz w:val="22"/></w:rPr>',
+      '<w:t>' + escXml(e.author || '') + '</w:t></w:r></w:p></w:tc>',
+      '<w:tc><w:tcPr><w:tcW w:w="3200" w:type="dxa"/><w:vAlign w:val="center"/></w:tcPr>',
+      '<w:p><w:r><w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman" w:hint="eastAsia"/><w:sz w:val="22"/></w:rPr>',
+      '<w:t>' + escXml(e.purpose || '') + '</w:t></w:r></w:p></w:tc>',
+      '</w:tr>',
+    ].join('')).join('\n');
+
+    // document.xml
+    const documentXml = [
+      '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
+      '<w:document xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"',
+      ' xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"',
+      ' xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing">',
+      '<w:body>',
+      // タイトル: 証拠説明書（甲号証）
+      '<w:p><w:pPr><w:jc w:val="center"/></w:pPr>',
+      '<w:r><w:rPr><w:rFonts w:hint="eastAsia"/><w:b/><w:sz w:val="36"/><w:szCs w:val="36"/></w:rPr>',
+      '<w:t>' + escXml(titleLabel) + '</w:t></w:r></w:p>',
+      // 空行
+      '<w:p/>',
+      // 日付（右寄せ）
+      '<w:p><w:pPr><w:jc w:val="right"/></w:pPr>',
+      '<w:r><w:rPr><w:rFonts w:hint="eastAsia"/><w:sz w:val="24"/></w:rPr>',
+      '<w:t>' + escXml(dateStr) + '</w:t></w:r></w:p>',
+      // 空行
+      '<w:p/>',
+      // テーブル
+      '<w:tbl>',
+      '<w:tblPr>',
+      '<w:tblW w:w="9500" w:type="dxa"/>',
+      '<w:tblBorders>',
+      '<w:top w:val="single" w:sz="4" w:space="0" w:color="000000"/>',
+      '<w:left w:val="single" w:sz="4" w:space="0" w:color="000000"/>',
+      '<w:bottom w:val="single" w:sz="4" w:space="0" w:color="000000"/>',
+      '<w:right w:val="single" w:sz="4" w:space="0" w:color="000000"/>',
+      '<w:insideH w:val="single" w:sz="4" w:space="0" w:color="000000"/>',
+      '<w:insideV w:val="single" w:sz="4" w:space="0" w:color="000000"/>',
+      '</w:tblBorders>',
+      '<w:tblLayout w:type="fixed"/>',
+      '</w:tblPr>',
+      '<w:tblGrid>',
+      '<w:gridCol w:w="1100"/><w:gridCol w:w="2000"/><w:gridCol w:w="800"/>',
+      '<w:gridCol w:w="1200"/><w:gridCol w:w="1200"/><w:gridCol w:w="3200"/>',
+      '</w:tblGrid>',
+      headerRow,
+      dataRows,
+      '</w:tbl>',
+      '<w:p/>',
+      // ページ設定（A4縦）
+      '<w:sectPr>',
+      '<w:pgSz w:w="11906" w:h="16838"/>',
+      '<w:pgMar w:top="1440" w:right="1080" w:bottom="1440" w:left="1080" w:header="720" w:footer="720" w:gutter="0"/>',
+      '</w:sectPr>',
+      '</w:body>',
+      '</w:document>',
+    ].join('\n');
+
+    // [Content_Types].xml
+    const contentTypes = [
+      '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
+      '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">',
+      '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>',
+      '<Default Extension="xml" ContentType="application/xml"/>',
+      '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>',
+      '</Types>',
+    ].join('\n');
+
+    // _rels/.rels
+    const relsXml = [
+      '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
+      '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">',
+      '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>',
+      '</Relationships>',
+    ].join('\n');
+
+    // word/_rels/document.xml.rels
+    const docRels = [
+      '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
+      '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">',
+      '</Relationships>',
+    ].join('\n');
+
+    // JSZipでdocxパッケージ
+    const zip = new JSZip();
+    zip.file('[Content_Types].xml', contentTypes);
+    zip.file('_rels/.rels', relsXml);
+    zip.file('word/document.xml', documentXml);
+    zip.file('word/_rels/document.xml.rels', docRels);
+
+    const blob = await zip.generateAsync({
+      type: 'blob',
+      mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    });
+
+    return blob;
   }
 
   // =============================================
@@ -1907,7 +2109,7 @@ ${rows}
 
         try {
           const result = await generateEvidenceBrowser(files[i], {
-            evidenceLabel, evidenceTitle: titleStr, allPages,
+            evidenceLabel, evidenceTitle: titleStr, allPages, onProgress: updateProgress,
           });
           const blobUrl = URL.createObjectURL(result.blob);
           results.push({ fileName: result.fileName, downloadUrl: blobUrl, error: null });
@@ -1924,17 +2126,20 @@ ${rows}
         }
       }
 
-      // 証拠説明書の生成
+      // 証拠説明書（Word）の生成
       if (outputSheet && sheetEntries.length > 0) {
-        const partyLabel = party.startsWith('甲') ? '原告' : party.startsWith('乙') ? '被告' : '';
-        const sheetBlob = generateEvidenceSheet(sheetEntries, partyLabel);
-        const sheetUrl = URL.createObjectURL(sheetBlob);
-        results.push({
-          fileName: '証拠説明書.xls',
-          downloadUrl: sheetUrl,
-          error: null,
-          isSheet: true,
-        });
+        try {
+          const sheetBlob = await generateEvidenceSheetDocx(sheetEntries, { party });
+          const sheetUrl = URL.createObjectURL(sheetBlob);
+          results.push({
+            fileName: `証拠説明書_${party}号証.docx`,
+            downloadUrl: sheetUrl,
+            error: null,
+            isSheet: true,
+          });
+        } catch (sheetErr) {
+          console.error('証拠説明書の生成に失敗:', sheetErr);
+        }
       }
 
       resetProcessingSteps();
