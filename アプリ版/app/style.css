@@ -74,22 +74,23 @@ body {
 /* ===== モード切替 ===== */
 .header { display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 12px; }
 .mode-toggle {
-  display: flex; gap: 4px; padding: 3px;
-  background: var(--bg); border-radius: var(--radius-sm);
+  display: flex; gap: 6px; padding: 5px;
+  background: var(--bg); border-radius: var(--radius);
   border: 1px solid var(--border);
 }
 .mode-btn {
-  display: inline-flex; align-items: center; gap: 6px;
-  padding: 8px 14px; border: none; border-radius: 8px;
-  font-size: 0.78rem; font-weight: 600; font-family: inherit;
+  display: inline-flex; align-items: center; gap: 10px;
+  padding: 14px 24px; border: none; border-radius: 12px;
+  font-size: 0.95rem; font-weight: 700; font-family: inherit;
   cursor: pointer; transition: all 0.25s;
   background: transparent; color: var(--text-3);
   white-space: nowrap;
 }
+.mode-btn svg { width: 22px; height: 22px; }
 .mode-btn:hover { color: var(--text-2); background: var(--surface); }
 .mode-btn.active {
   background: var(--surface); color: var(--primary);
-  box-shadow: var(--shadow-sm);
+  box-shadow: var(--shadow);
 }
 .mode-btn.active[data-mode="receipt"] { color: #059669; }
 .mode-btn.active[data-mode="evidence"] { color: #dc2626; }
@@ -436,8 +437,12 @@ body {
 /* ===== レスポンシブ ===== */
 @media (max-width: 700px) {
   .container { padding: 16px 12px 40px; }
+  .header { flex-direction: column; align-items: stretch; }
   .header h1 { font-size: 1.15rem; }
   .logo-icon { width: 44px; height: 44px; border-radius: 12px; }
+  .mode-toggle { width: 100%; }
+  .mode-btn { flex: 1; justify-content: center; padding: 12px 10px; font-size: 0.85rem; }
+  .mode-btn svg { width: 18px; height: 18px; }
   .form-grid { grid-template-columns: 1fr; }
   .upload-area { padding: 40px 20px 36px; }
   .steps-nav { padding: 10px 12px; gap: 0; }
@@ -450,4 +455,59 @@ body {
   .processing-steps { flex-direction: column; align-items: center; gap: 12px; }
   .upload-formats { flex-wrap: wrap; }
   .confirm-top { flex-direction: column; gap: 8px; }
+}
+
+/* ===== 文書送付書プレビュー ===== */
+.sofusho-preview {
+  background: #fff; border: 1px solid var(--border); border-radius: var(--radius-sm);
+  padding: 32px 28px; margin-top: 16px; font-size: 0.85rem; line-height: 1.8;
+  box-shadow: var(--shadow-sm); position: relative; max-width: 640px; margin-left: auto; margin-right: auto;
+}
+.sofusho-preview::before {
+  content: 'プレビュー'; position: absolute; top: -10px; left: 16px;
+  background: var(--primary); color: #fff; font-size: 0.7rem; font-weight: 700;
+  padding: 2px 10px; border-radius: 4px;
+}
+.sofusho-preview .preview-title {
+  text-align: center; font-size: 1.1rem; font-weight: 700; margin-bottom: 16px;
+  letter-spacing: 0.2em;
+}
+.sofusho-preview .preview-row {
+  display: flex; gap: 8px; margin-bottom: 4px;
+}
+.sofusho-preview .preview-label {
+  min-width: 80px; color: var(--text-3); font-weight: 600; flex-shrink: 0;
+}
+.sofusho-preview .preview-val {
+  color: var(--text); font-weight: 500;
+}
+.sofusho-preview .preview-val:empty::after {
+  content: '（未入力）'; color: var(--warning); font-size: 0.8em;
+}
+.sofusho-preview .preview-divider {
+  border: none; border-top: 1px dashed var(--border); margin: 12px 0;
+}
+.sofusho-preview .preview-date {
+  text-align: right; color: var(--text-2); margin-bottom: 8px;
+}
+
+/* ===== 受領書プレビュー ===== */
+.receipt-preview-wrap {
+  margin-top: 16px; text-align: center;
+}
+.receipt-preview-box {
+  position: relative; margin: 0 auto; background: #f3f4f6;
+  border: 1px solid #ddd; box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+  overflow: hidden; min-height: 320px; max-width: 400px;
+  display: flex; align-items: center; justify-content: center;
+}
+.receipt-preview-box canvas {
+  display: block; width: 100%;
+}
+.receipt-preview-overlay {
+  position: absolute; font-size: 9px; color: #000; white-space: nowrap;
+  pointer-events: none; z-index: 5;
+}
+.receipt-preview-hint {
+  font-size: 0.75em; color: var(--text-3); margin-top: 6px;
 }

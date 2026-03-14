@@ -194,7 +194,7 @@
       <!-- モード切替トグル -->
       <div class="mode-toggle">
         <button class="mode-btn active" id="modeSofusho" data-mode="sofusho">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
             <polyline points="14 2 14 8 20 8"/>
             <line x1="12" y1="18" x2="12" y2="12"/>
@@ -203,14 +203,14 @@
           送付書を作る
         </button>
         <button class="mode-btn" id="modeReceipt" data-mode="receipt">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
             <polyline points="22 4 12 14.01 9 11.01"/>
           </svg>
           受領書を作る
         </button>
         <button class="mode-btn" id="modeEvidence" data-mode="evidence">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M4 7V4h16v3"/>
             <line x1="9" y1="20" x2="15" y2="20"/>
             <line x1="12" y1="4" x2="12" y2="20"/>
@@ -477,6 +477,48 @@
         </div>
       </div>
 
+      <!-- 文書送付書プレビュー -->
+      <div class="sofusho-preview" id="sofushoPreview">
+        <div class="preview-date" id="sofushoPreviewDate"></div>
+        <div class="preview-title">文 書 送 付 書</div>
+        <div class="preview-row">
+          <span class="preview-label">送付先</span>
+          <span class="preview-val" id="sofushoPreviewCourt"></span>
+        </div>
+        <div class="preview-row">
+          <span class="preview-label">FAX</span>
+          <span class="preview-val" id="sofushoPreviewCourtFax"></span>
+        </div>
+        <hr class="preview-divider">
+        <div class="preview-row">
+          <span class="preview-label">事件番号</span>
+          <span class="preview-val" id="sofushoPreviewCaseNumber"></span>
+        </div>
+        <div class="preview-row">
+          <span class="preview-label">事件名</span>
+          <span class="preview-val" id="sofushoPreviewCaseName"></span>
+        </div>
+        <hr class="preview-divider">
+        <div class="preview-row">
+          <span class="preview-label">原告</span>
+          <span class="preview-val" id="sofushoPreviewPlaintiff"></span>
+        </div>
+        <div class="preview-row">
+          <span class="preview-label">被告</span>
+          <span class="preview-val" id="sofushoPreviewDefendant"></span>
+        </div>
+        <hr class="preview-divider">
+        <div class="preview-row">
+          <span class="preview-label">送付書類</span>
+          <span class="preview-val" id="sofushoPreviewDocTitle" style="font-weight:700;"></span>
+        </div>
+        <hr class="preview-divider">
+        <div style="text-align:right;margin-top:8px;">
+          <div id="sofushoPreviewLawyer" style="font-weight:600;"></div>
+          <div id="sofushoPreviewLawyerFax" style="font-size:0.85em;color:var(--text-2);"></div>
+        </div>
+      </div>
+
       <div class="form-actions">
         <button class="btn btn-ghost" id="btnBack">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -555,6 +597,37 @@
             <input type="text" id="receiptDate" placeholder="自動（今日の日付）">
           </div>
           <p class="receipt-date-hint">空欄の場合、今日の日付が自動入力されます</p>
+        </div>
+      </div>
+
+      <!-- 受領書PDFプレビュー -->
+      <div class="card form-card form-card-wide" id="receiptPreviewCard" style="margin-top:16px;">
+        <div class="card-header">
+          <div class="card-icon card-icon-green">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="3" y="3" width="18" height="18" rx="2"/>
+              <path d="M3 9h18"/>
+            </svg>
+          </div>
+          <h3>出力プレビュー</h3>
+        </div>
+        <div class="receipt-preview-wrap">
+          <div class="receipt-preview-box" id="receiptPreviewBox">
+            <div id="receiptPreviewPlaceholder" style="padding:40px 20px;color:#9ca3af;font-size:0.85em;">
+              <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#d1d5db" stroke-width="1.5" style="margin:0 auto 12px;display:block;">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                <polyline points="14 2 14 8 20 8"/>
+              </svg>
+              PDFを読み込み中...
+            </div>
+            <canvas id="receiptPreviewCanvas" style="display:none;width:100%;"></canvas>
+            <!-- 書込みオーバーレイ（先生・日付・署名） -->
+            <div id="receiptOverlaySensei" class="receipt-preview-overlay" style="display:none;color:#000;font-weight:500;">先生</div>
+            <div id="receiptOverlayDate" class="receipt-preview-overlay" style="display:none;color:#000;"></div>
+            <div id="receiptOverlaySign" class="receipt-preview-overlay" style="display:none;color:#000;"></div>
+            <div id="receiptOverlaySeal" class="receipt-preview-overlay" style="display:none;color:#c00;font-weight:700;">㊞</div>
+          </div>
+          <p class="receipt-preview-hint">受領書ページを自動検出し、書き込み位置をプレビューしています</p>
         </div>
       </div>
 

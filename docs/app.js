@@ -1974,7 +1974,41 @@
         input.classList.remove('field-empty');
       });
     });
+    // プレビュー初期更新
+    updateSofushoPreview();
   }
+
+  // --- 文書送付書プレビュー更新 ---
+  function updateSofushoPreview() {
+    var today = getTodayReiwa();
+    var dateStr = '令和' + today.year + '年' + today.month + '月' + today.day + '日';
+    var el = function(id) { return document.getElementById(id); };
+    var pDate = el('sofushoPreviewDate');
+    if (pDate) pDate.textContent = dateStr;
+    var pCourt = el('sofushoPreviewCourt');
+    if (pCourt) pCourt.textContent = fields.courtName.value.trim();
+    var pCourtFax = el('sofushoPreviewCourtFax');
+    if (pCourtFax) pCourtFax.textContent = fields.courtFax.value.trim();
+    var pCaseNum = el('sofushoPreviewCaseNumber');
+    if (pCaseNum) pCaseNum.textContent = fields.caseNumber.value.trim();
+    var pCaseName = el('sofushoPreviewCaseName');
+    if (pCaseName) pCaseName.textContent = fields.caseName.value.trim();
+    var pPlaintiff = el('sofushoPreviewPlaintiff');
+    if (pPlaintiff) pPlaintiff.textContent = fields.plaintiffName.value.trim();
+    var pDefendant = el('sofushoPreviewDefendant');
+    if (pDefendant) pDefendant.textContent = fields.defendantName.value.trim();
+    var pDocTitle = el('sofushoPreviewDocTitle');
+    if (pDocTitle) pDocTitle.textContent = fields.documentTitle.value.trim();
+    var pLawyer = el('sofushoPreviewLawyer');
+    if (pLawyer) pLawyer.textContent = fields.plaintiffLawyer.value.trim() ? '原告訴訟代理人弁護士　' + fields.plaintiffLawyer.value.trim() : '';
+    var pLawyerFax = el('sofushoPreviewLawyerFax');
+    if (pLawyerFax) pLawyerFax.textContent = fields.plaintiffLawyerFax.value.trim() ? 'FAX: ' + fields.plaintiffLawyerFax.value.trim() : '';
+  }
+
+  // 文書送付書の全入力フィールドにリアルタイムプレビュー更新をバインド
+  Object.values(fields).forEach(function(input) {
+    input.addEventListener('input', updateSofushoPreview);
+  });
 
   // --- 戻るボタン ---
   btnBack.addEventListener('click', () => { setState('upload'); });
@@ -2073,6 +2107,168 @@
   if (modeEvidenceBtn) modeEvidenceBtn.addEventListener('click', () => switchMode('evidence'));
 
   // --- 受領書モード: 複数ファイルを確認画面に表示 ---
+  // --- 受領書プレビュー用変数 ---
+  var receiptPreviewCanvas = $('#receiptPreviewCanvas');
+  var receiptPreviewBox = $('#receiptPreviewBox');
+  var receiptPreviewPlaceholder = $('#receiptPreviewPlaceholder');
+  var receiptOverlaySensei = $('#receiptOverlaySensei');
+  var receiptOverlayDate = $('#receiptOverlayDate');
+  var receiptOverlaySign = $('#receiptOverlaySign');
+  var receiptOverlaySeal = $('#receiptOverlaySeal');
+  var receiptPreviewOcrData = null; // { words, imgWidth, imgHeight, pageNum, pgW, pgH }
+
+  async function renderReceiptPreview(file) {
+    if (!receiptPreviewCanvas || !receiptPreviewBox) return;
+    try {
+      // PDFを読み込み受領書ページを検索
+      if (receiptPreviewPlaceholder) {
+        receiptPreviewPlaceholder.style.display = '';
+        receiptPreviewPlaceholder.innerHTML = '<div style="padding:20px;color:#9ca3af;font-size:0.85em;">受領書ページを検出中...</div>';
+      }
+      receiptPreviewCanvas.style.display = 'none';
+      hideReceiptOverlays();
+
+      var ab = await file.arrayBuffer();
+      var pdfDocProxy = await pdfjsLib.getDocument({
+        data: ab, cMapUrl: CMAP_URL, cMapPacked: true
+      }).promise;
+
+      var totalPages = pdfDocProxy.numPages;
+
+      // 受領書ページ検出（OCR）
+      var pdfDoc = await PDFLib.PDFDocument.load(ab);
+      var result = await findReceiptPage(ab, totalPages, function(msg) {
+        if (receiptPreviewPlaceholder) {
+          receiptPreviewPlaceholder.innerHTML = '<div style="padding:20px;color:#9ca3af;font-size:0.85em;">' + msg + '</div>';
+        }
+      });
+      var pageNum = result.pageNum;
+      var ocr = result.ocr;
+      var pgPage = pdfDoc.getPage(pageNum - 1);
+      var pgSize = pgPage.getSize();
+
+      receiptPreviewOcrData = {
+        words: ocr.words,
+        imgWidth: ocr.imgWidth,
+        imgHeight: ocr.imgHeight,
+        pageNum: pageNum,
+        pgW: pgSize.width,
+        pgH: pgSize.height,
+      };
+
+      // 該当ページをcanvasに描画
+      var page = await pdfDocProxy.getPage(pageNum);
+      var vp = page.getViewport({ scale: 1 });
+      var boxW = receiptPreviewBox.clientWidth || 360;
+      var scale = boxW / vp.width;
+      var scaledVp = page.getViewport({ scale: scale });
+
+      receiptPreviewCanvas.width = scaledVp.width;
+      receiptPreviewCanvas.height = scaledVp.height;
+      receiptPreviewCanvas.style.display = 'block';
+      receiptPreviewCanvas.style.width = '100%';
+      if (receiptPreviewPlaceholder) receiptPreviewPlaceholder.style.display = 'none';
+      receiptPreviewBox.style.height = scaledVp.height + 'px';
+
+      var ctx = receiptPreviewCanvas.getContext('2d');
+      await page.render({ canvasContext: ctx, viewport: scaledVp }).promise;
+
+      // 書き込み位置をオーバーレイ表示
+      updateReceiptPreviewOverlays();
+
+    } catch (e) {
+      console.warn('[受領書Preview]', e);
+      if (receiptPreviewPlaceholder) {
+        receiptPreviewPlaceholder.style.display = '';
+        receiptPreviewPlaceholder.innerHTML = '<div style="padding:20px;color:#f59e0b;font-size:0.85em;">プレビューを表示できませんでした<br><span style="font-size:0.85em;color:#9ca3af;">（生成は可能です）</span></div>';
+      }
+      receiptPreviewCanvas.style.display = 'none';
+    }
+  }
+
+  function hideReceiptOverlays() {
+    [receiptOverlaySensei, receiptOverlayDate, receiptOverlaySign, receiptOverlaySeal].forEach(function(el) {
+      if (el) el.style.display = 'none';
+    });
+  }
+
+  function updateReceiptPreviewOverlays() {
+    if (!receiptPreviewOcrData || !receiptPreviewBox) return;
+    var d = receiptPreviewOcrData;
+    var canvasH = receiptPreviewCanvas.height;
+    var canvasW = receiptPreviewCanvas.width;
+    var boxW = receiptPreviewBox.clientWidth || 360;
+    var boxH = receiptPreviewBox.clientHeight || canvasH;
+    var scaleX = boxW / d.imgWidth;
+    var scaleY = boxH / d.imgHeight;
+
+    var pos = detectPositions(d.words, d.imgWidth, d.imgHeight, d.pgW, d.pgH);
+
+    // 先生位置（行の右隣）
+    if (pos.gyou && receiptOverlaySensei) {
+      var gyouWord = d.words.find(function(w) { return w.text === '行' || w.text.includes('行'); });
+      if (gyouWord) {
+        receiptOverlaySensei.style.display = '';
+        receiptOverlaySensei.style.left = ((gyouWord.x2 + 2) * scaleX) + 'px';
+        receiptOverlaySensei.style.top = (gyouWord.y1 * scaleY) + 'px';
+        receiptOverlaySensei.style.fontSize = Math.max(7, Math.round((gyouWord.y2 - gyouWord.y1) * scaleY * 0.7)) + 'px';
+      }
+    }
+
+    // 日付位置
+    var dateWord = d.words.find(function(w) {
+      return w.text.includes('年') && w.text.includes('月');
+    });
+    if (!dateWord) {
+      dateWord = d.words.find(function(w) { return w.text.includes('日付') || w.text.includes('年月日'); });
+    }
+    if (dateWord && receiptOverlayDate) {
+      var today = new Date();
+      var reiwaYear = today.getFullYear() - 2018;
+      var dateText = receiptDateInput.value.trim() || ('令和' + reiwaYear + '年' + (today.getMonth()+1) + '月' + today.getDate() + '日');
+      receiptOverlayDate.textContent = dateText;
+      receiptOverlayDate.style.display = '';
+      receiptOverlayDate.style.left = (dateWord.x1 * scaleX) + 'px';
+      receiptOverlayDate.style.top = (dateWord.y1 * scaleY) + 'px';
+      receiptOverlayDate.style.fontSize = Math.max(7, Math.round((dateWord.y2 - dateWord.y1) * scaleY * 0.7)) + 'px';
+      receiptOverlayDate.style.background = 'rgba(255,255,255,0.9)';
+      receiptOverlayDate.style.padding = '0 2px';
+    }
+
+    // 署名位置（代理人行）
+    var agentWord = d.words.find(function(w) {
+      return w.text.includes('代理人') || w.text.includes('弁護士');
+    });
+    if (agentWord && receiptOverlaySign) {
+      var signerName = receiptSignerName.value.trim() || '';
+      var signerTitle = receiptSignerTitle.value || '被告訴訟代理人';
+      receiptOverlaySign.textContent = '　' + signerName;
+      receiptOverlaySign.style.display = '';
+      receiptOverlaySign.style.left = ((agentWord.x2 + 4) * scaleX) + 'px';
+      receiptOverlaySign.style.top = (agentWord.y1 * scaleY) + 'px';
+      receiptOverlaySign.style.fontSize = Math.max(7, Math.round((agentWord.y2 - agentWord.y1) * scaleY * 0.7)) + 'px';
+      receiptOverlaySign.style.background = 'rgba(255,255,255,0.9)';
+      receiptOverlaySign.style.padding = '0 2px';
+
+      // 印鑑
+      if (receiptOverlaySeal) {
+        receiptOverlaySeal.style.display = '';
+        var nameW = (signerName.length + 1) * Math.max(7, Math.round((agentWord.y2 - agentWord.y1) * scaleY * 0.7)) * 0.6;
+        receiptOverlaySeal.style.left = ((agentWord.x2 + 4) * scaleX + nameW + 4) + 'px';
+        receiptOverlaySeal.style.top = (agentWord.y1 * scaleY) + 'px';
+        receiptOverlaySeal.style.fontSize = Math.max(7, Math.round((agentWord.y2 - agentWord.y1) * scaleY * 0.7)) + 'px';
+      }
+    }
+  }
+
+  // 受領書フォーム変更時にプレビューオーバーレイ更新
+  [receiptSignerTitle, receiptSignerName, receiptDateInput].forEach(function(el) {
+    if (el) {
+      el.addEventListener('input', updateReceiptPreviewOverlays);
+      el.addEventListener('change', updateReceiptPreviewOverlays);
+    }
+  });
+
   function prepareReceiptFiles(pdfs) {
     receiptUploadFiles = pdfs;
     if (pdfs.length === 1) {
@@ -2086,6 +2282,8 @@
       receiptFileListWrap.style.display = 'block';
     }
     setState('receipt-confirm');
+    // 最初のPDFをプレビュー
+    renderReceiptPreview(pdfs[0]);
   }
 
   // --- 受領書：戻るボタン ---
