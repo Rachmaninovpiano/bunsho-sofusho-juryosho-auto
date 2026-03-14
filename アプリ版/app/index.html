@@ -3,7 +3,15 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#4f46e5">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="つくる君">
+  <meta name="description" content="FAX送信書PDFから文書送付書・受領書を自動生成。証拠番号スタンプ＋証拠説明書Word出力も対応。">
   <title>自動でつくる君 - 文書送付書・受領書・証拠番号</title>
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" type="image/svg+xml" href="icons/icon.svg">
+  <link rel="apple-touch-icon" href="icons/icon.svg">
   <link rel="stylesheet" href="style.css">
   <style>
     /* 設定ボタン */
@@ -97,6 +105,36 @@
       font-size: 0.82em;
       padding: 4px 12px;
     }
+
+    /* 証拠ファイルリスト */
+    .evidence-file-list {
+      margin: 0; padding: 0; list-style: none;
+      max-height: 240px; overflow-y: auto;
+    }
+    .evidence-file-list li {
+      display: flex; align-items: center; gap: 8px;
+      padding: 8px 12px; margin-bottom: 4px;
+      background: #f9fafb; border-radius: 8px;
+      font-size: 0.85em; cursor: grab;
+      border: 1.5px solid transparent;
+      transition: border-color 0.15s, background 0.15s;
+    }
+    .evidence-file-list li:hover { background: #f0f4ff; }
+    .evidence-file-list li.dragging { opacity: 0.5; border-color: var(--primary); }
+    .evidence-file-list li .drag-handle {
+      color: #9ca3af; cursor: grab; flex-shrink: 0;
+    }
+    .evidence-file-list li .file-name {
+      flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .evidence-file-list li .file-label {
+      font-weight: 600; color: #dc2626; white-space: nowrap; font-size: 0.9em;
+    }
+    .evidence-file-list li .file-remove {
+      cursor: pointer; color: #9ca3af; padding: 2px;
+      border: none; background: none; line-height: 1;
+    }
+    .evidence-file-list li .file-remove:hover { color: #dc2626; }
 
     /* OCR初回ダウンロード通知 */
     .ocr-notice {
@@ -239,7 +277,7 @@
               </svg>
             </div>
           </div>
-          <h2 class="upload-heading">FAX送信書のPDFをドロップ</h2>
+          <h2 class="upload-heading">PDF・Wordファイルをドロップ</h2>
           <p class="upload-desc">ファイルをここにドラッグ＆ドロップしてください</p>
           <div class="upload-divider">
             <span>または</span>
@@ -251,7 +289,7 @@
               <line x1="12" y1="3" x2="12" y2="15"/>
             </svg>
             ファイルを選択
-            <input type="file" id="fileInput" accept=".pdf" multiple hidden>
+            <input type="file" id="fileInput" accept=".pdf,.docx,.doc" multiple hidden>
           </label>
           <div class="upload-formats">
             <div class="format-badge">
@@ -549,9 +587,23 @@
           <span class="status-badge status-success" id="evidenceFileCountBadge">証拠番号モード</span>
         </div>
       </div>
+
+      <!-- ファイルリスト（並べ替え・個別設定対応） -->
       <div id="evidenceFileListWrap" style="display:none;" class="card" style="margin-bottom:16px;padding:12px 16px;">
-        <p style="font-size:0.85em;color:var(--text-secondary);margin:0 0 8px">処理予定ファイル:</p>
-        <ul id="evidenceFileList" style="margin:0;padding:0 0 0 18px;font-size:0.85em;color:var(--text-primary);"></ul>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+          <p style="font-size:0.85em;color:var(--text-secondary);margin:0;">処理予定ファイル（ドラッグで並べ替え可）:</p>
+          <div style="display:flex;gap:6px;">
+            <button class="btn btn-ghost" id="btnEvidenceMerge" style="padding:4px 10px;font-size:0.78em;" title="選択したファイルを1つのPDFに結合">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg>
+              枝番として結合
+            </button>
+            <button class="btn btn-ghost" id="btnEvidenceAddFiles" style="padding:4px 10px;font-size:0.78em;">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+              追加
+            </button>
+          </div>
+        </div>
+        <ul id="evidenceFileList" class="evidence-file-list"></ul>
       </div>
 
       <div class="form-grid">
@@ -573,6 +625,16 @@
               <option value="甲">甲（原告）</option>
               <option value="乙">乙（被告）</option>
               <option value="丙">丙（第三者）</option>
+              <option value="丁">丁</option>
+              <option value="戊">戊</option>
+              <optgroup label="保全事件">
+                <option value="疎甲">疎甲（債権者）</option>
+                <option value="疎乙">疎乙（債務者）</option>
+              </optgroup>
+              <optgroup label="その他">
+                <option value="弁">弁（弁護士会照会等）</option>
+                <option value="資料">資料</option>
+              </optgroup>
               <optgroup label="複数原告">
                 <option value="甲A">甲A</option>
                 <option value="甲B">甲B</option>
@@ -584,6 +646,11 @@
                 <option value="乙C">乙C</option>
               </optgroup>
             </select>
+          </div>
+          <div class="form-group">
+            <label for="evidenceCustomParty">カスタム符号（上記以外）</label>
+            <input type="text" id="evidenceCustomParty" placeholder="任意の符号を入力" style="font-size:0.9em;">
+            <div style="font-size:0.78em;color:var(--text-secondary);margin-top:2px;">入力するとプルダウンより優先されます</div>
           </div>
           <div class="form-group">
             <label style="display:flex;align-items:center;gap:8px;">
@@ -601,7 +668,9 @@
               <input type="number" id="evidenceSubNum" min="1" placeholder="なし">
             </div>
           </div>
-          <div style="font-size:0.78em;color:var(--text-secondary);margin-top:-8px;">複数PDF時は号証番号から連番。枝番は単体PDF時のみ有効</div>
+          <div style="font-size:0.78em;color:var(--text-secondary);margin-top:-8px;">
+            複数PDF: 号証番号から連番 or 枝番として連番（結合モード時）
+          </div>
         </div>
 
         <!-- 書誌情報（証拠説明書用） -->
@@ -620,7 +689,7 @@
           <div class="form-group">
             <label for="evidenceTitle">標目（証拠のタイトル）</label>
             <input type="text" id="evidenceTitle" placeholder="例: 売買契約書">
-            <div style="font-size:0.78em;color:var(--text-secondary);margin-top:2px;">PDF右上に括弧付きで赤字表示＋証拠説明書に記載</div>
+            <div style="font-size:0.78em;color:var(--text-secondary);margin-top:2px;">PDF右上に括弧付きで表示＋証拠説明書に記載</div>
           </div>
           <div style="display:flex;gap:10px;">
             <div class="form-group" style="flex:1;">
@@ -646,24 +715,100 @@
         </div>
       </div>
 
-      <!-- オプション＋プレビュー -->
+      <!-- スタンプ設定＋ライブプレビュー -->
       <div class="card form-card form-card-wide">
-        <div style="display:flex;flex-wrap:wrap;gap:16px;align-items:flex-start;">
-          <div style="flex:1;min-width:200px;">
-            <h3 style="margin:0 0 12px;font-size:0.95em;">オプション</h3>
+        <div class="card-header">
+          <div class="card-icon" style="background:#fef2f2;color:#dc2626;">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="3" y="3" width="18" height="18" rx="2"/>
+              <path d="M3 9h18"/><path d="M9 3v18"/>
+            </svg>
+          </div>
+          <h3>スタンプ設定・プレビュー</h3>
+        </div>
+        <div style="display:flex;flex-wrap:wrap;gap:20px;align-items:flex-start;">
+          <!-- 左: スタンプ設定 -->
+          <div style="flex:1;min-width:240px;">
+            <div style="display:flex;gap:10px;margin-bottom:10px;">
+              <div class="form-group" style="flex:1;">
+                <label for="evidenceStampSize">文字サイズ</label>
+                <select id="evidenceStampSize" class="form-select">
+                  <option value="14">小（14pt）</option>
+                  <option value="18">中（18pt）</option>
+                  <option value="20" selected>標準（20pt）</option>
+                  <option value="24">大（24pt）</option>
+                  <option value="28">特大（28pt）</option>
+                  <option value="32">極大（32pt）</option>
+                  <option value="36">最大（36pt）</option>
+                </select>
+              </div>
+              <div class="form-group" style="flex:1;">
+                <label for="evidenceStampColor">文字色</label>
+                <select id="evidenceStampColor" class="form-select">
+                  <option value="red" selected>赤</option>
+                  <option value="black">黒</option>
+                  <option value="blue">青</option>
+                </select>
+              </div>
+            </div>
+            <div style="font-size:0.78em;color:var(--text-secondary);margin-bottom:10px;padding:6px 10px;background:#f0f4ff;border-radius:6px;">
+              位置はプレビュー上でスタンプをドラッグして調整
+            </div>
+            <div class="form-group" style="margin-bottom:10px;">
+              <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+                <input type="checkbox" id="evidenceStampBg" checked>
+                白背景を付ける（文字と重なっても見やすい）
+              </label>
+            </div>
+            <div class="form-group" style="margin-bottom:10px;">
+              <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+                <input type="checkbox" id="evidenceStampBorder">
+                枠線を付ける
+              </label>
+            </div>
+            <hr style="border:none;border-top:1px solid var(--border);margin:12px 0;">
+            <h4 style="margin:0 0 8px;font-size:0.88em;color:var(--text-secondary);">オプション</h4>
             <label style="display:flex;align-items:center;gap:8px;font-size:0.88em;margin-bottom:8px;cursor:pointer;">
               <input type="checkbox" id="evidenceAllPages">
-              全ページにスタンプ（1ページ目のみがデフォルト）
+              全ページにスタンプ
+            </label>
+            <label style="display:flex;align-items:center;gap:8px;font-size:0.88em;margin-bottom:8px;cursor:pointer;">
+              <input type="checkbox" id="evidenceAddPageNum">
+              ページ番号を付与（各ページ下部中央）
+            </label>
+            <label style="display:flex;align-items:center;gap:8px;font-size:0.88em;margin-bottom:8px;cursor:pointer;">
+              <input type="checkbox" id="evidenceMintsName" checked>
+              mints形式でファイル名を出力（甲001 売買契約書.pdf）
             </label>
             <label style="display:flex;align-items:center;gap:8px;font-size:0.88em;cursor:pointer;">
               <input type="checkbox" id="evidenceOutputSheet" checked>
               証拠説明書（Word）も出力する
             </label>
           </div>
-          <div style="flex:1;min-width:200px;text-align:center;">
-            <h3 style="margin:0 0 8px;font-size:0.95em;">プレビュー</h3>
-            <div id="evidencePreview" style="font-size:1.8em;font-weight:700;color:#dc2626;padding:8px 0;white-space:pre-line;line-height:1.4;">
-              甲１号証
+          <!-- 右: PDFライブプレビュー（ドラッグでスタンプ位置調整） -->
+          <div style="flex:1.3;min-width:260px;text-align:center;">
+            <div id="evidencePreviewBox" style="position:relative;margin:0 auto;background:#f3f4f6;border:1px solid #ddd;box-shadow:0 2px 8px rgba(0,0,0,0.1);overflow:hidden;min-height:320px;max-width:400px;display:flex;align-items:center;justify-content:center;">
+              <!-- PDF未読込時のプレースホルダー -->
+              <div id="evidencePreviewPlaceholder" style="padding:40px 20px;color:#9ca3af;font-size:0.85em;">
+                <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#d1d5db" stroke-width="1.5" style="margin:0 auto 12px;display:block;">
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                  <polyline points="14 2 14 8 20 8"/>
+                </svg>
+                PDFをアップロードすると<br>ここに1ページ目が表示されます
+              </div>
+              <!-- PDFレンダリング用canvas -->
+              <canvas id="evidencePreviewCanvas" style="display:none;width:100%;"></canvas>
+              <!-- ドラッグ可能なスタンプオーバーレイ -->
+              <div id="evidenceStampPreview" style="display:none;position:absolute;top:8px;right:8px;padding:4px 8px;font-weight:700;font-size:11px;color:#dc2626;background:rgba(255,255,255,0.95);border:1px solid transparent;white-space:pre-line;line-height:1.3;text-align:center;cursor:grab;user-select:none;z-index:10;box-shadow:0 1px 4px rgba(0,0,0,0.15);border-radius:2px;">
+                甲１号証
+              </div>
+              <!-- ページ番号プレビュー -->
+              <div id="evidencePageNumPreview" style="display:none;position:absolute;bottom:6px;left:0;right:0;text-align:center;font-size:8px;color:#666;">
+                - 1 -
+              </div>
+            </div>
+            <div style="font-size:0.75em;color:var(--text-secondary);margin-top:6px;">
+              <span id="evidencePreviewHint">実際のPDF上でスタンプをドラッグして位置調整できます</span>
             </div>
           </div>
         </div>
@@ -746,7 +891,7 @@
           <polyline points="17 8 12 3 7 8"/>
           <line x1="12" y1="3" x2="12" y2="15"/>
         </svg>
-        <p>ここにPDFをドロップ!</p>
+        <p>ここにファイルをドロップ!</p>
       </div>
     </div>
 
@@ -842,23 +987,22 @@
   <!-- アプリケーション（統合版）-->
   <script src="app.js"></script>
 
-  <!-- Electron: メニューからのファイルオープン対応 -->
+  <!-- Electron -->
   <script>
     if (window.electronAPI) {
       window.electronAPI.onOpenFiles(filePaths => {
-        // ファイルパスからFileオブジェクトを生成してドロップと同じ処理に流す
         Promise.all(filePaths.map(fp =>
-          fetch('file://' + fp).then(r => r.blob()).then(blob => {
-            const name = fp.replace(/\\/g, '/').split('/').pop();
-            return new File([blob], name, { type: 'application/pdf' });
+          fetch("file://" + fp).then(r => r.blob()).then(blob => {
+            const name = fp.replace(/\/g, "/").split("/").pop();
+            return new File([blob], name, { type: "application/pdf" });
           })
         )).then(files => {
-          const input = document.getElementById('fileInput');
+          const input = document.getElementById("fileInput");
           const dt = new DataTransfer();
           files.forEach(f => dt.items.add(f));
           input.files = dt.files;
-          input.dispatchEvent(new Event('change', { bubbles: true }));
-        }).catch(err => console.error('File open error:', err));
+          input.dispatchEvent(new Event("change", { bubbles: true }));
+        }).catch(err => console.error("File open error:", err));
       });
     }
   </script>

@@ -268,7 +268,7 @@
       const pageNum = ocrPages[idx];
       onProgress && onProgress(`ページ ${pageNum}/${totalPages} をOCR中...`);
       const page = await pdfDoc.getPage(pageNum);
-      const viewport = page.getViewport({ scale: 300 / 72 });
+      const viewport = page.getViewport({ scale: 400 / 72 });
       const canvas = document.createElement('canvas');
       canvas.width = viewport.width;
       canvas.height = viewport.height;
@@ -311,6 +311,71 @@
   }
 
   // =============================================
+  // Section 2b: Word (.docx) テキスト抽出
+  // =============================================
+
+  async function extractTextFromDocx(arrayBuffer, onProgress) {
+    onProgress && onProgress('Wordファイルからテキストを抽出中...');
+    const zip = await JSZip.loadAsync(arrayBuffer);
+    const docXmlFile = zip.file('word/document.xml');
+    if (!docXmlFile) {
+      throw new Error('Word文書の解析に失敗しました（document.xmlが見つかりません）');
+    }
+    const xmlStr = await docXmlFile.async('string');
+    let text = '';
+    var endParaTag = new RegExp('<\/w:p>', 'g');
+    var wtTagGlobal = new RegExp('<w:t[^>]*>([^<]*)<\/w:t>', 'g');
+    var wtTagSingle = new RegExp('<w:t[^>]*>([^<]*)<\/w:t>');
+    var paragraphs = xmlStr.split(endParaTag);
+    for (var pi = 0; pi < paragraphs.length; pi++) {
+      var para = paragraphs[pi];
+      var textMatches = para.match(wtTagGlobal);
+      if (textMatches) {
+        var line = '';
+        for (var ti = 0; ti < textMatches.length; ti++) {
+          var inner = textMatches[ti].match(wtTagSingle);
+          if (inner) line += inner[1];
+        }
+        text += line + '\n';
+      }
+    }
+    console.log('[抽出] Word文書テキスト:', text.length, '文字');
+    return text;
+  }
+
+  // =============================================
+  // Section 2c: テキスト正規化（OCR誤読修正）
+  // =============================================
+
+  function normalizeExtractedText(text) {
+    let t = text;
+    // 全角数字→半角
+    t = t.replace(/[０-９]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0));
+    // 全角英字→半角
+    t = t.replace(/[Ａ-Ｚａ-ｚ]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0));
+    // 特殊スペース→通常スペース
+    t = t.replace(/[  -​　﻿]/g, ' ');
+    // OCR誤読: よくある文字化けパターン修正
+    t = t.replace(/裁判\s*所/g, '裁判所');
+    t = t.replace(/地方\s*裁判/g, '地方裁判');
+    t = t.replace(/高等\s*裁判/g, '高等裁判');
+    t = t.replace(/家庭\s*裁判/g, '家庭裁判');
+    t = t.replace(/簡易\s*裁判/g, '簡易裁判');
+    t = t.replace(/弁護\s*士/g, '弁護士');
+    t = t.replace(/原\s*告/g, '原告');
+    t = t.replace(/被\s*告/g, '被告');
+    t = t.replace(/事\s*件/g, '事件');
+    t = t.replace(/損\s*害\s*賠\s*償/g, '損害賠償');
+    t = t.replace(/請\s*求/g, '請求');
+    t = t.replace(/訴\s*訟\s*代\s*理\s*人/g, '訴訟代理人');
+    t = t.replace(/令\s*和/g, '令和');
+    t = t.replace(/平\s*成/g, '平成');
+    // 連続スペースを1つに
+    t = t.replace(/ {2,}/g, ' ');
+    return t;
+  }
+
+  // =============================================
   // Section 3: 文書送付書 情報抽出
   // =============================================
 
@@ -318,6 +383,7 @@
     const config = getConfig();
     const info = {};
     const normalizedText = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+    const cleanText = normalizeExtractedText(normalizedText);
 
     // 都市名リスト
     const cityNames = '東京|大阪|名古屋|広島|福岡|仙台|札幌|高松|京都|神戸|横浜|さいたま|千葉|山口|岡山|福山|松山|高知|那覇|長崎|熊本|鹿児島|大分|宮崎|佐賀|秋田|青森|盛岡|山形|福島|水戸|宇都宮|前橋|甲府|長野|新潟|富山|金沢|福井|津|大津|奈良|和歌山|鳥取|松江|徳島|旭川|釧路|函館';
@@ -329,7 +395,7 @@
     );
     let courtMatch;
     const courtCandidates = [];
-    while ((courtMatch = courtPattern.exec(normalizedText)) !== null) {
+    while ((courtMatch = courtPattern.exec(cleanText)) !== null) {
       const cleaned = courtMatch[1].replace(/\s+/g, '');
       courtCandidates.push(cleaned);
     }
@@ -346,7 +412,7 @@
       new RegExp(`(令\\s*和\\s*(\\d+)\\s*年\\s*[（(]\\s*([${caseSymbols}])\\s*[）)]\\s*第\\s*(\\d+)\\s*号)`),
     ];
     for (const pattern of caseNumberPatterns) {
-      const match = normalizedText.match(pattern);
+      const match = cleanText.match(pattern);
       if (match) {
         let cn = match[1].replace(/\s+/g, '');
         cn = cn.replace(/（/g, '(').replace(/）/g, ')');
@@ -357,7 +423,7 @@
 
     // パターン2: 「事件の表示」セクションから
     if (!info.caseNumber) {
-      const displaySectionMatch = normalizedText.match(
+      const displaySectionMatch = cleanText.match(
         /事\s*件\s*の\s*表\s*示[】\]\s]*([^\n]{1,80})/
       );
       if (displaySectionMatch) {
@@ -377,7 +443,7 @@
             const yearMatches = [];
             const yearRegex = /令\s*和\s*(\d+)\s*年/g;
             let ym;
-            while ((ym = yearRegex.exec(normalizedText)) !== null) {
+            while ((ym = yearRegex.exec(cleanText)) !== null) {
               yearMatches.push(parseInt(ym[1]));
             }
             if (yearMatches.length > 0) {
@@ -401,7 +467,7 @@
       /([\u4e00-\u9fff][\u4e00-\u9fff\s]*(?:請\s*求|確\s*認)\s*事\s*件)/,
     ];
     for (const pattern of caseNamePatterns) {
-      const match = normalizedText.match(pattern);
+      const match = cleanText.match(pattern);
       if (match) {
         let caseName = match[0];
         if (match[1] && !match[0].startsWith('損害')) {
@@ -420,7 +486,7 @@
     }
 
     // --- 原告名・被告名 ---
-    const partySection = normalizedText.match(/当\s*事\s*者[\s\S]{0,200}/);
+    const partySection = cleanText.match(/当\s*事\s*者[\s\S]{0,200}/);
     if (partySection) {
       const partySectionText = partySection[0];
       const plaintiffInParty = partySectionText.match(
@@ -461,7 +527,7 @@
         const allMatches = [];
         const globalPattern = new RegExp(pattern.source, 'g');
         let match;
-        while ((match = globalPattern.exec(normalizedText)) !== null) {
+        while ((match = globalPattern.exec(cleanText)) !== null) {
           allMatches.push(match);
         }
         for (const match of allMatches) {
@@ -490,7 +556,7 @@
         const allMatches = [];
         const globalPattern = new RegExp(pattern.source, 'g');
         let match;
-        while ((match = globalPattern.exec(normalizedText)) !== null) {
+        while ((match = globalPattern.exec(cleanText)) !== null) {
           allMatches.push(match);
         }
         for (const match of allMatches) {
@@ -532,28 +598,28 @@
 
     const formalPattern = /原告\s*(?:ら)?\s*(?:訴\s*訟)?\s*代理\s*人\s*弁護\s*士\s*([^\n]{2,20})/g;
     let lm;
-    while ((lm = formalPattern.exec(normalizedText)) !== null) {
+    while ((lm = formalPattern.exec(cleanText)) !== null) {
       const name = cleanLawyerName(lm[1]);
       if (name) lawyerCandidates.push({ name, priority: 1 });
     }
 
     const senderPattern = /人\s*弁護\s*士\s*([^\n]{2,20})/g;
-    while ((lm = senderPattern.exec(normalizedText)) !== null) {
-      const contextBefore = normalizedText.substring(Math.max(0, lm.index - 30), lm.index);
+    while ((lm = senderPattern.exec(cleanText)) !== null) {
+      const contextBefore = cleanText.substring(Math.max(0, lm.index - 30), lm.index);
       if (contextBefore.includes('被告')) continue;
       const name = cleanLawyerName(lm[1]);
       if (name) lawyerCandidates.push({ name, priority: 2 });
     }
 
     const atePattern = /弁護\s*士\s*([^\n]{2,15})\s*宛/g;
-    while ((lm = atePattern.exec(normalizedText)) !== null) {
+    while ((lm = atePattern.exec(cleanText)) !== null) {
       const name = cleanLawyerName(lm[1]);
       if (name) lawyerCandidates.push({ name, priority: 3 });
     }
 
     const generalPattern = /弁護\s*士\s*([^\n]{2,15})/g;
-    while ((lm = generalPattern.exec(normalizedText)) !== null) {
-      const contextBefore = normalizedText.substring(Math.max(0, lm.index - 50), lm.index);
+    while ((lm = generalPattern.exec(cleanText)) !== null) {
+      const contextBefore = cleanText.substring(Math.max(0, lm.index - 50), lm.index);
       if (contextBefore.includes('被告')) continue;
       const name = cleanLawyerName(lm[1]);
       if (name && !ownLawyerNames.some(own => name.includes(own))) {
@@ -603,7 +669,7 @@
         .replace(/[－ー・]/g, '-');
     }
 
-    const explicitCourtFaxMatch = normalizedText.match(
+    const explicitCourtFaxMatch = cleanText.match(
       /裁\s*判\s*所[\s\S]{0,60}?[（(]\s*(?:FAX|ＦＡＸ|[Ff]ax)\s*([0-9０-９\-－ー・]+)\s*[）)]/
     );
     if (explicitCourtFaxMatch) {
@@ -613,7 +679,7 @@
     const allExplicitFaxes = [];
     const explicitFaxRegex = /([\u4e00-\u9fff]{1,10})\s*[（(]\s*(?:FAX|ＦＡＸ|[Ff]ax)\s*([0-9０-９\-－ー・]+)\s*[）)]/g;
     let efm;
-    while ((efm = explicitFaxRegex.exec(normalizedText)) !== null) {
+    while ((efm = explicitFaxRegex.exec(cleanText)) !== null) {
       allExplicitFaxes.push({ label: efm[1], fax: normalizeFax(efm[2]) });
     }
     for (const ef of allExplicitFaxes) {
@@ -628,7 +694,7 @@
     const faxRegex = /(?:FAX|ＦＡＸ|[Ff]ax)[：:\s]*([0-9０-９\-－ー・]+)/g;
     const allFaxEntries = [];
     let faxMatch;
-    while ((faxMatch = faxRegex.exec(normalizedText)) !== null) {
+    while ((faxMatch = faxRegex.exec(cleanText)) !== null) {
       const faxNum = normalizeFax(faxMatch[1]);
       allFaxEntries.push({ fax: faxNum, index: faxMatch.index });
     }
@@ -638,7 +704,7 @@
       if (isOwnFax) continue;
       if (info.courtFaxFromPdf && entry.fax.includes(info.courtFaxFromPdf)) continue;
       const isKnownCourtFax = courtFaxValues.some(cf => entry.fax.includes(cf));
-      const textBefore = normalizedText.substring(
+      const textBefore = cleanText.substring(
         Math.max(0, entry.index - 200), entry.index
       );
       const isNearPlaintiffLawyer = /原告\s*(?:ら)?\s*訴\s*訟\s*代\s*理\s*人/.test(textBefore) ||
@@ -790,13 +856,24 @@
   }
 
   async function uploadAndExtractBrowser(file, onProgress) {
-    console.log('[つくる君] PDF解析開始:', file.name, file.size, 'bytes');
-    onProgress && onProgress('PDFを読み込み中...');
-    const pdfArrayBuffer = await file.arrayBuffer();
-    const pdfText = await extractTextBrowser(pdfArrayBuffer, onProgress);
-    console.log('[つくる君] 抽出テキスト:', pdfText.length, '文字');
+    const fileName = file.name.toLowerCase();
+    const isDocx = fileName.endsWith('.docx') || fileName.endsWith('.doc');
+    console.log('[つくる君] 解析開始:', file.name, file.size, 'bytes', isDocx ? '(Word)' : '(PDF)');
+
+    const arrayBuffer = await file.arrayBuffer();
+    let extractedText;
+
+    if (isDocx) {
+      onProgress && onProgress('Wordファイルを読み込み中...');
+      extractedText = await extractTextFromDocx(arrayBuffer, onProgress);
+    } else {
+      onProgress && onProgress('PDFを読み込み中...');
+      extractedText = await extractTextBrowser(arrayBuffer, onProgress);
+    }
+
+    console.log('[つくる君] 抽出テキスト:', extractedText.length, '文字');
     onProgress && onProgress('情報を抽出中...');
-    const info = extractInfoFromText(pdfText);
+    const info = extractInfoFromText(extractedText);
     console.log('[つくる君] 抽出結果:', JSON.stringify(info, null, 2));
     const documentTitle = getDocumentTitleFromFilename(file.name);
     return { info, documentTitle, originalName: file.name };
@@ -833,7 +910,7 @@
       cMapPacked: true,
     }).promise;
     const page = await pdfDoc.getPage(pageNum);
-    const viewport = page.getViewport({ scale: 300 / 72 });
+    const viewport = page.getViewport({ scale: 400 / 72 });
     const canvas = document.createElement('canvas');
     canvas.width = viewport.width;
     canvas.height = viewport.height;
@@ -1169,13 +1246,7 @@
   // =============================================
 
   /**
-   * 証拠番号ラベルを組み立てる。
-   * 弁護革命互換: {code}{第?}{num}号証{の枝番?}
-   * @param {string} party - 甲, 乙, 丙, 甲A, 乙B 等
-   * @param {number} num - 号証番号
-   * @param {number|null} subNum - 枝番（null = なし）
-   * @param {boolean} useDai - 「第」を入れるか（甲第1号証 vs 甲1号証）
-   * @returns {string}
+   * 証拠番号ラベル構築
    */
   function buildEvidenceLabel(party, num, subNum, useDai) {
     const fullNum = toFullWidthNumber(String(num));
@@ -1188,6 +1259,22 @@
     return label;
   }
 
+  /**
+   * mints形式ファイル名生成
+   * 例: 甲001 売買契約書.pdf, 甲001-1~5 陳述書.pdf
+   */
+  function buildMintsFileName(party, num, subNum, title, subRange) {
+    const numStr = String(num).padStart(3, '0');
+    let name = party + numStr;
+    if (subNum) {
+      name += '-' + subNum;
+    } else if (subRange) {
+      name += '-' + subRange;
+    }
+    if (title) name += ' ' + title;
+    return name + '.pdf';
+  }
+
   /** XML特殊文字エスケープ */
   function escXml(str) {
     return String(str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;')
@@ -1195,12 +1282,31 @@
   }
 
   /**
-   * PDFの指定ページ右上に証拠番号と標目を赤字ベクターテキストでスタンプ。
-   * drawText()方式: PDF上のテキストが編集可能。
-   * 弁護革命準拠: 右上余白に赤字で証拠番号を配置。
+   * スタンプ色取得
+   */
+  function getStampColor(colorName) {
+    const { rgb } = PDFLib;
+    switch (colorName) {
+      case 'red': return rgb(0.86, 0.15, 0.15);
+      case 'blue': return rgb(0.1, 0.2, 0.7);
+      case 'black': return rgb(0, 0, 0);
+      default: return rgb(0.86, 0.15, 0.15);
+    }
+  }
+
+  /**
+   * PDFの指定ページに証拠番号と標目をスタンプ。
+   * カスタマイズ可能: 位置, サイズ, 色, 背景, 枠線, ページ番号
    */
   async function generateEvidenceBrowser(file, opts) {
-    const { evidenceLabel, evidenceTitle, allPages, onProgress } = opts;
+    const {
+      evidenceLabel, evidenceTitle, allPages, onProgress,
+      stampSize = 20, stampColor = 'red',
+      stampBg = true, stampBorder = false,
+      addPageNum = false,
+      customX = 0.85, customY = 0.03
+    } = opts;
+
     onProgress && onProgress('PDFを読み込み中...');
     const pdfArrayBuffer = await file.arrayBuffer();
     const pdfDoc = await PDFLib.PDFDocument.load(pdfArrayBuffer);
@@ -1210,12 +1316,10 @@
     const fontBytes = await loadJapaneseFont();
     const font = await pdfDoc.embedFont(fontBytes, { subset: false });
 
-    const margin = 36;
-    const topMargin = 30;
-    const labelFontSize = 20;
-    const titleFontSize = 12;
+    const labelFontSize = parseInt(stampSize, 10) || 20;
+    const titleFontSize = Math.max(10, Math.round(labelFontSize * 0.6));
+    const color = getStampColor(stampColor);
     const { rgb } = PDFLib;
-    const red = rgb(0.86, 0.15, 0.15);
 
     const pageCount = pdfDoc.getPageCount();
     const pagesToStamp = allPages
@@ -1227,30 +1331,82 @@
       const page = pdfDoc.getPage(pageIndex);
       const { width: pgW, height: pgH } = page.getSize();
 
-      // A3横向き対応: 横長ならば右上に配置（弁護革命準拠）
-      const isLandscape = pgW > pgH;
-      const effectiveMargin = isLandscape ? margin + 10 : margin;
-
-      // 証拠番号ラベル（赤字）
+      // ラベルテキストのサイズ計算
       const labelWidth = font.widthOfTextAtSize(evidenceLabel, labelFontSize);
-      const labelX = pgW - effectiveMargin - labelWidth;
-      const labelY = pgH - topMargin - labelFontSize;
+      let titleText = '';
+      let titleWidth = 0;
+      if (evidenceTitle && evidenceTitle.trim()) {
+        titleText = '\uff08' + evidenceTitle.trim() + '\uff09';
+        titleWidth = font.widthOfTextAtSize(titleText, titleFontSize);
+      }
+      const boxPadH = 8;
+      const boxPadV = 6;
+      const boxWidth = Math.max(labelWidth, titleWidth) + boxPadH * 2;
+      const boxHeight = labelFontSize + (titleText ? titleFontSize + 6 : 0) + boxPadV * 2;
+
+      // 位置計算: ドラッグで指定された比率(customX/customY)からPDF座標に変換
+      // customX: スタンプ中心のX比率(0~1), customY: スタンプ上端のY比率(0~1, 上が0)
+      // PDF座標系は左下原点なので変換が必要
+      let boxX = customX * pgW - boxWidth / 2;
+      let boxY = pgH - (customY * pgH) - boxHeight;
+      // はみ出し防止
+      boxX = Math.max(2, Math.min(pgW - boxWidth - 2, boxX));
+      boxY = Math.max(2, Math.min(pgH - boxHeight - 2, boxY));
+
+      // 背景描画
+      if (stampBg) {
+        page.drawRectangle({
+          x: boxX, y: boxY,
+          width: boxWidth, height: boxHeight,
+          color: rgb(1, 1, 1),
+          opacity: 0.92,
+          borderColor: stampBorder ? color : undefined,
+          borderWidth: stampBorder ? 1 : 0,
+        });
+      } else if (stampBorder) {
+        page.drawRectangle({
+          x: boxX, y: boxY,
+          width: boxWidth, height: boxHeight,
+          borderColor: color,
+          borderWidth: 1,
+        });
+      }
+
+      // 証拠番号ラベル
+      const labelX = boxX + (boxWidth - labelWidth) / 2;
+      const labelY = titleText
+        ? boxY + titleFontSize + 6 + boxPadV
+        : boxY + boxPadV;
 
       page.drawText(evidenceLabel, {
         x: labelX, y: labelY,
-        size: labelFontSize, font, color: red,
+        size: labelFontSize, font, color,
       });
 
-      // 標目（括弧付き・小さめ赤字）
-      if (evidenceTitle && evidenceTitle.trim()) {
-        const titleText = '（' + evidenceTitle.trim() + '）';
-        const titleWidth = font.widthOfTextAtSize(titleText, titleFontSize);
-        const titleX = pgW - effectiveMargin - titleWidth;
-        const titleY = labelY - titleFontSize - 6;
-
+      // 標目
+      if (titleText) {
+        const titleX = boxX + (boxWidth - titleWidth) / 2;
+        const titleY = boxY + boxPadV;
         page.drawText(titleText, {
           x: titleX, y: titleY,
-          size: titleFontSize, font, color: red,
+          size: titleFontSize, font, color,
+        });
+      }
+    }
+
+    // ページ番号付与
+    if (addPageNum) {
+      const pageNumSize = 10;
+      for (let i = 0; i < pageCount; i++) {
+        const page = pdfDoc.getPage(i);
+        const { width: pgW } = page.getSize();
+        const pageNumText = '- ' + (i + 1) + ' -';
+        const numWidth = font.widthOfTextAtSize(pageNumText, pageNumSize);
+        page.drawText(pageNumText, {
+          x: (pgW - numWidth) / 2,
+          y: 24,
+          size: pageNumSize, font,
+          color: rgb(0.3, 0.3, 0.3),
         });
       }
     }
@@ -1258,17 +1414,32 @@
     const savedBytes = await pdfDoc.save();
     const blob = new Blob([savedBytes], { type: 'application/pdf' });
     const baseName = file.name.replace(/\.pdf$/i, '');
-    const fileName = `${baseName}_${evidenceLabel}.pdf`;
-    return { blob, fileName };
+    const fileName = baseName + '_' + evidenceLabel + '.pdf';
+    return { blob, fileName, pageCount };
   }
 
   /**
-   * 証拠説明書をWord(.docx)形式で生成する。
-   * 裁判所標準書式: 号証 | 標目(原本/写し) | 作成年月日 | 作成者 | 立証趣旨
-   * @param {Array} entries - [{label, title, originalOrCopy, createdDate, author, purpose}]
-   * @param {Object} options - { party }
-   * @returns {Promise<Blob>}
+   * 複数PDFを結合（枝番結合用）
    */
+  async function mergePdfs(files, onProgress) {
+    onProgress && onProgress('PDFを結合中...');
+    const mergedPdf = await PDFLib.PDFDocument.create();
+    for (let i = 0; i < files.length; i++) {
+      onProgress && onProgress('結合中 (' + (i + 1) + '/' + files.length + ')...');
+      const ab = await files[i].arrayBuffer();
+      const srcPdf = await PDFLib.PDFDocument.load(ab);
+      const pages = await mergedPdf.copyPages(srcPdf, srcPdf.getPageIndices());
+      pages.forEach(function(p) { mergedPdf.addPage(p); });
+    }
+    const mergedBytes = await mergedPdf.save();
+    return new File(
+      [mergedBytes],
+      '結合_' + files[0].name,
+      { type: 'application/pdf' }
+    );
+  }
+
+
   async function generateEvidenceSheetDocx(entries, options) {
     const opts = options || {};
     const party = opts.party || '甲';
@@ -1609,23 +1780,36 @@
   // --- ファイルアップロード ---
   function handleFiles(fileList) {
     if (!fileList || fileList.length === 0) return;
-    const pdfs = Array.from(fileList).filter(f => f.name.toLowerCase().endsWith('.pdf'));
-    if (pdfs.length === 0) {
-      showError('PDFファイルを選択してください。');
+    const validExts = ['.pdf', '.docx', '.doc'];
+    const allFiles = Array.from(fileList).filter(f => {
+      const name = f.name.toLowerCase();
+      return validExts.some(ext => name.endsWith(ext));
+    });
+    // 受領書・証拠モードはPDFのみ
+    if (currentMode === 'receipt' || currentMode === 'evidence') {
+      const pdfs = allFiles.filter(f => f.name.toLowerCase().endsWith('.pdf'));
+      if (pdfs.length === 0) {
+        showError('PDFファイルを選択してください。');
+        return;
+      }
+      if (currentMode === 'receipt') {
+        prepareReceiptFiles(pdfs);
+      } else {
+        prepareEvidenceFiles(pdfs);
+      }
       return;
     }
-    const oversized = pdfs.filter(f => f.size > 50 * 1024 * 1024);
+    // 文書送付書モード: PDF + Word
+    if (allFiles.length === 0) {
+      showError('PDF または Word (.docx) ファイルを選択してください。');
+      return;
+    }
+    const oversized = allFiles.filter(f => f.size > 50 * 1024 * 1024);
     if (oversized.length > 0) {
       showError(`ファイルサイズが大きすぎます（上限: 50MB）: ${oversized.map(f=>f.name).join(', ')}`);
       return;
     }
-    if (currentMode === 'receipt') {
-      prepareReceiptFiles(pdfs);
-    } else if (currentMode === 'evidence') {
-      prepareEvidenceFiles(pdfs);
-    } else {
-      uploadFiles(pdfs);
-    }
+    uploadFiles(allFiles);
   }
 
   // --- ドラッグ＆ドロップ ---
@@ -1678,8 +1862,8 @@
   // --- 文書送付書モード: 複数PDFアップロード → 情報統合 ---
   async function uploadFiles(pdfs) {
     setState('processing');
-    processingTitle.textContent = 'PDFを解析中...';
-    processingMessage.textContent = 'PDFを読み込んでいます...';
+    processingTitle.textContent = 'ファイルを解析中...';
+    processingMessage.textContent = 'ファイルを読み込んでいます...';
     startProcessingSteps('upload');
 
     try {
@@ -1688,7 +1872,7 @@
 
       for (let i = 0; i < total; i++) {
         if (total > 1) {
-          processingTitle.textContent = `PDFを解析中... (${i + 1}/${total})`;
+          processingTitle.textContent = `ファイルを解析中... (${i + 1}/${total})`;
         }
         const result = await uploadAndExtractBrowser(pdfs[i], updateProgress);
         allResults.push(result);
@@ -1877,7 +2061,7 @@
       uploadDesc.textContent = '証拠番号と標目を右上に赤字でスタンプします';
     } else {
       appTitle.textContent = '文書送付書自動でつくる君';
-      uploadHeading.textContent = 'FAX送信書のPDFをドロップ';
+      uploadHeading.textContent = 'PDF・Wordファイルをドロップ';
       uploadDesc.textContent = 'ファイルをここにドラッグ＆ドロップしてください';
     }
     receiptUploadFiles = [];
@@ -1988,6 +2172,7 @@
 
   // --- 証拠番号モード: DOM参照 ---
   const evidencePartySelect = $('#evidenceParty');
+  const evidenceCustomParty = $('#evidenceCustomParty');
   const evidenceNumberInput = $('#evidenceNumber');
   const evidenceSubNumInput = $('#evidenceSubNum');
   const evidenceUseDai = $('#evidenceUseDai');
@@ -1997,196 +2182,551 @@
   const evidenceAuthor = $('#evidenceAuthor');
   const evidencePurpose = $('#evidencePurpose');
   const evidenceAllPages = $('#evidenceAllPages');
+  const evidenceAddPageNum = $('#evidenceAddPageNum');
+  const evidenceMintsName = $('#evidenceMintsName');
   const evidenceOutputSheet = $('#evidenceOutputSheet');
-  const evidencePreview = $('#evidencePreview');
+  const evidenceStampSize = $('#evidenceStampSize');
+  const evidenceStampColor = $('#evidenceStampColor');
+  const evidenceStampBg = $('#evidenceStampBg');
+  const evidenceStampBorder = $('#evidenceStampBorder');
+  const evidenceStampPreview = $('#evidenceStampPreview');
+  const evidencePageNumPreview = $('#evidencePageNumPreview');
+  const evidencePreviewBox = $('#evidencePreviewBox');
+  const evidencePreviewCanvas = $('#evidencePreviewCanvas');
+  const evidencePreviewPlaceholder = $('#evidencePreviewPlaceholder');
   const evidenceSourceFileName = $('#evidenceSourceFileName');
   const btnEvidenceBack = $('#btnEvidenceBack');
   const btnEvidenceGenerate = $('#btnEvidenceGenerate');
+  const btnEvidenceMerge = $('#btnEvidenceMerge');
+  const btnEvidenceAddFiles = $('#btnEvidenceAddFiles');
   const evidenceFileCountBadge = $('#evidenceFileCountBadge');
   const evidenceFileListWrap = $('#evidenceFileListWrap');
   const evidenceFileList = $('#evidenceFileList');
 
+  let evidenceMergeMode = false;
+  // スタンプ位置: PDF座標系での比率 (0~1), 左上原点
+  // デフォルト: 右上 (x=0.85 y=0.03)
+  let stampPosRatioX = 0.85;
+  let stampPosRatioY = 0.03;
+  // PDFページサイズ(pt)
+  let previewPdfW = 595;
+  let previewPdfH = 842;
+
+  function getEvidenceParty() {
+    if (evidenceCustomParty && evidenceCustomParty.value.trim()) {
+      return evidenceCustomParty.value.trim();
+    }
+    return evidencePartySelect ? evidencePartySelect.value : '\u7532';
+  }
+
   function getEvidencePreviewLabel() {
-    const party = evidencePartySelect ? evidencePartySelect.value : '甲';
+    const party = getEvidenceParty();
     const num = evidenceNumberInput ? evidenceNumberInput.value.trim() : '';
     const subNum = evidenceSubNumInput ? evidenceSubNumInput.value.trim() : '';
     const useDai = evidenceUseDai ? evidenceUseDai.checked : false;
-    if (!num) return party + (useDai ? '第' : '') + '○号証';
+    if (!num) return party + (useDai ? '\u7b2c' : '') + '\u25cb\u53f7\u8a3c';
     return buildEvidenceLabel(party, parseInt(num, 10), subNum ? parseInt(subNum, 10) : null, useDai);
   }
 
-  function updateEvidencePreview() {
-    if (evidencePreview) {
-      const label = getEvidencePreviewLabel();
-      evidencePreview.textContent = label;
-      const title = evidenceTitleInput ? evidenceTitleInput.value.trim() : '';
-      if (title) {
-        evidencePreview.textContent = label + '\n（' + title + '）';
+  // --- PDFプレビューレンダリング ---
+  async function renderEvidencePreviewPdf(file) {
+    if (!evidencePreviewCanvas || !evidencePreviewBox) return;
+    try {
+      var ab = await file.arrayBuffer();
+      var pdf = await pdfjsLib.getDocument({
+        data: ab, cMapUrl: CMAP_URL, cMapPacked: true
+      }).promise;
+      var page = await pdf.getPage(1);
+      var vp = page.getViewport({ scale: 1 });
+      previewPdfW = vp.width;
+      previewPdfH = vp.height;
+
+      // プレビューボックスの幅に合わせてスケール
+      var boxW = evidencePreviewBox.clientWidth || 360;
+      var scale = boxW / vp.width;
+      var scaledVp = page.getViewport({ scale: scale });
+
+      evidencePreviewCanvas.width = scaledVp.width;
+      evidencePreviewCanvas.height = scaledVp.height;
+      evidencePreviewCanvas.style.display = 'block';
+      evidencePreviewCanvas.style.width = '100%';
+      if (evidencePreviewPlaceholder) evidencePreviewPlaceholder.style.display = 'none';
+
+      // ボックス高さをcanvas比率に合わせる
+      evidencePreviewBox.style.height = scaledVp.height + 'px';
+
+      var ctx = evidencePreviewCanvas.getContext('2d');
+      await page.render({ canvasContext: ctx, viewport: scaledVp }).promise;
+
+      // スタンプオーバーレイを表示
+      if (evidenceStampPreview) {
+        evidenceStampPreview.style.display = '';
+        positionStampFromRatio();
       }
+    } catch (e) {
+      console.warn('[Preview] PDF\u30ec\u30f3\u30c0\u30ea\u30f3\u30b0\u5931\u6557:', e);
+      // フォールバック: プレースホルダーのまま
+      showPreviewPlaceholder();
     }
   }
 
-  [evidencePartySelect, evidenceNumberInput, evidenceSubNumInput, evidenceTitleInput].forEach(el => {
-    if (el) el.addEventListener('input', updateEvidencePreview);
+  function showPreviewPlaceholder() {
+    if (evidencePreviewCanvas) evidencePreviewCanvas.style.display = 'none';
+    if (evidencePreviewPlaceholder) evidencePreviewPlaceholder.style.display = '';
+    if (evidenceStampPreview) evidenceStampPreview.style.display = '';
+    evidencePreviewBox.style.height = '320px';
+    positionStampFromRatio();
+  }
+
+  function positionStampFromRatio() {
+    if (!evidenceStampPreview || !evidencePreviewBox) return;
+    var boxW = evidencePreviewBox.clientWidth || 360;
+    var boxH = evidencePreviewBox.clientHeight || 320;
+    var stampW = evidenceStampPreview.offsetWidth;
+    var stampH = evidenceStampPreview.offsetHeight;
+    var left = stampPosRatioX * boxW - stampW / 2;
+    var top = stampPosRatioY * boxH;
+    // Clamp
+    left = Math.max(0, Math.min(boxW - stampW, left));
+    top = Math.max(0, Math.min(boxH - stampH, top));
+    evidenceStampPreview.style.left = left + 'px';
+    evidenceStampPreview.style.top = top + 'px';
+    evidenceStampPreview.style.right = '';
+  }
+
+  // --- スタンプドラッグ ---
+  (function setupStampDrag() {
+    if (!evidenceStampPreview || !evidencePreviewBox) return;
+    var dragging = false;
+    var offsetX = 0, offsetY = 0;
+
+    function onStart(ex, ey) {
+      dragging = true;
+      var rect = evidenceStampPreview.getBoundingClientRect();
+      offsetX = ex - rect.left;
+      offsetY = ey - rect.top;
+      evidenceStampPreview.style.cursor = 'grabbing';
+      evidenceStampPreview.style.transition = 'none';
+    }
+    function onMove(ex, ey) {
+      if (!dragging) return;
+      var boxRect = evidencePreviewBox.getBoundingClientRect();
+      var boxW = evidencePreviewBox.clientWidth;
+      var boxH = evidencePreviewBox.clientHeight;
+      var stampW = evidenceStampPreview.offsetWidth;
+      var stampH = evidenceStampPreview.offsetHeight;
+
+      var newLeft = ex - boxRect.left - offsetX;
+      var newTop = ey - boxRect.top - offsetY;
+      newLeft = Math.max(0, Math.min(boxW - stampW, newLeft));
+      newTop = Math.max(0, Math.min(boxH - stampH, newTop));
+
+      evidenceStampPreview.style.left = newLeft + 'px';
+      evidenceStampPreview.style.top = newTop + 'px';
+      evidenceStampPreview.style.right = '';
+
+      // 比率を更新 (中心基準)
+      stampPosRatioX = (newLeft + stampW / 2) / boxW;
+      stampPosRatioY = newTop / boxH;
+    }
+    function onEnd() {
+      if (!dragging) return;
+      dragging = false;
+      evidenceStampPreview.style.cursor = 'grab';
+      evidenceStampPreview.style.transition = '';
+    }
+
+    // マウス
+    evidenceStampPreview.addEventListener('mousedown', function(e) {
+      e.preventDefault();
+      onStart(e.clientX, e.clientY);
+    });
+    document.addEventListener('mousemove', function(e) {
+      if (dragging) { e.preventDefault(); onMove(e.clientX, e.clientY); }
+    });
+    document.addEventListener('mouseup', onEnd);
+
+    // タッチ
+    evidenceStampPreview.addEventListener('touchstart', function(e) {
+      e.preventDefault();
+      var t = e.touches[0];
+      onStart(t.clientX, t.clientY);
+    }, { passive: false });
+    document.addEventListener('touchmove', function(e) {
+      if (dragging) { var t = e.touches[0]; onMove(t.clientX, t.clientY); }
+    }, { passive: false });
+    document.addEventListener('touchend', onEnd);
+  })();
+
+  function updateEvidencePreview() {
+    var label = getEvidencePreviewLabel();
+    var title = evidenceTitleInput ? evidenceTitleInput.value.trim() : '';
+
+    // スタンプテキスト更新
+    if (evidenceStampPreview) {
+      var text = label;
+      if (title) text += '\n\uff08' + title + '\uff09';
+      evidenceStampPreview.textContent = text;
+
+      // 色
+      var colorMap = { red: '#dc2626', black: '#111', blue: '#1d4ed8' };
+      var colorVal = evidenceStampColor ? evidenceStampColor.value : 'red';
+      evidenceStampPreview.style.color = colorMap[colorVal] || '#dc2626';
+
+      // サイズ
+      var sizeVal = evidenceStampSize ? parseInt(evidenceStampSize.value) : 20;
+      evidenceStampPreview.style.fontSize = Math.round(sizeVal * 0.55) + 'px';
+
+      // 背景・枠線
+      var hasBg = evidenceStampBg ? evidenceStampBg.checked : true;
+      var hasBorder = evidenceStampBorder ? evidenceStampBorder.checked : false;
+      evidenceStampPreview.style.background = hasBg ? 'rgba(255,255,255,0.95)' : 'transparent';
+      if (hasBorder) {
+        evidenceStampPreview.style.border = '1px solid ' + (colorMap[colorVal] || '#dc2626');
+      } else {
+        evidenceStampPreview.style.border = '1px solid transparent';
+      }
+
+      // 位置を再適用（サイズ変更で幅が変わるため）
+      setTimeout(positionStampFromRatio, 10);
+    }
+
+    // ページ番号プレビュー
+    if (evidencePageNumPreview) {
+      evidencePageNumPreview.style.display = (evidenceAddPageNum && evidenceAddPageNum.checked) ? '' : 'none';
+    }
+
+    updateEvidenceFileListLabels();
+  }
+
+  function updateEvidenceFileListLabels() {
+    if (!evidenceFileList || !evidenceUploadFiles || evidenceUploadFiles.length === 0) return;
+    var party = getEvidenceParty();
+    var startNum = parseInt(evidenceNumberInput ? evidenceNumberInput.value : '1', 10) || 1;
+    var useDai = evidenceUseDai ? evidenceUseDai.checked : false;
+    var subNum = evidenceSubNumInput ? evidenceSubNumInput.value.trim() : '';
+
+    var items = evidenceFileList.querySelectorAll('li');
+    items.forEach(function(li, i) {
+      var labelEl = li.querySelector('.file-label');
+      if (!labelEl) return;
+      if (evidenceMergeMode) {
+        labelEl.textContent = buildEvidenceLabel(party, startNum, i + 1, useDai);
+      } else {
+        var currentSub = (evidenceUploadFiles.length === 1 && subNum) ? parseInt(subNum, 10) : null;
+        labelEl.textContent = buildEvidenceLabel(party, startNum + i, currentSub, useDai);
+      }
+    });
+  }
+
+  // プレビュー更新対象コントロール
+  var evidencePreviewControls = [
+    evidencePartySelect, evidenceCustomParty, evidenceNumberInput,
+    evidenceSubNumInput, evidenceTitleInput,
+    evidenceStampSize, evidenceStampColor
+  ];
+  evidencePreviewControls.forEach(function(el) {
+    if (el) {
+      el.addEventListener('input', updateEvidencePreview);
+      el.addEventListener('change', updateEvidencePreview);
+    }
+  });
+  [evidenceUseDai, evidenceStampBg, evidenceStampBorder, evidenceAddPageNum].forEach(function(el) {
     if (el) el.addEventListener('change', updateEvidencePreview);
   });
-  if (evidenceUseDai) evidenceUseDai.addEventListener('change', updateEvidencePreview);
 
-  function prepareEvidenceFiles(pdfs) {
-    evidenceUploadFiles = pdfs;
+  function renderEvidenceFileList() {
+    if (!evidenceFileList || !evidenceUploadFiles) return;
+    var dragIcon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 6h.01M8 12h.01M8 18h.01M12 6h.01M12 12h.01M12 18h.01"/></svg>';
+    var removeIcon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
+
+    evidenceFileList.innerHTML = evidenceUploadFiles.map(function(f, i) {
+      return '<li draggable="true" data-index="' + i + '">' +
+        '<span class="drag-handle">' + dragIcon + '</span>' +
+        '<span class="file-name">' + f.name + '</span>' +
+        '<span class="file-label"></span>' +
+        '<button class="file-remove" data-index="' + i + '" title="\u524a\u9664">' + removeIcon + '</button>' +
+        '</li>';
+    }).join('');
+
+    updateEvidenceFileListLabels();
+
+    // ドラッグ並べ替え
+    var dragSrcIndex = null;
+    evidenceFileList.querySelectorAll('li').forEach(function(li) {
+      li.addEventListener('dragstart', function(e) {
+        dragSrcIndex = parseInt(li.dataset.index);
+        li.classList.add('dragging');
+        e.dataTransfer.effectAllowed = 'move';
+      });
+      li.addEventListener('dragover', function(e) {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+      });
+      li.addEventListener('drop', function(e) {
+        e.preventDefault();
+        var targetIndex = parseInt(li.dataset.index);
+        if (dragSrcIndex !== null && dragSrcIndex !== targetIndex) {
+          var moved = evidenceUploadFiles.splice(dragSrcIndex, 1)[0];
+          evidenceUploadFiles.splice(targetIndex, 0, moved);
+          renderEvidenceFileList();
+        }
+      });
+      li.addEventListener('dragend', function() {
+        li.classList.remove('dragging');
+        dragSrcIndex = null;
+      });
+    });
+
+    // 削除ボタン
+    evidenceFileList.querySelectorAll('.file-remove').forEach(function(btn) {
+      btn.addEventListener('click', function() {
+        var idx = parseInt(btn.dataset.index);
+        evidenceUploadFiles.splice(idx, 1);
+        if (evidenceUploadFiles.length === 0) {
+          setState('upload');
+          return;
+        }
+        renderEvidenceFileList();
+        updateEvidenceSourceInfo();
+        // 先頭ファイルのプレビュー更新
+        renderEvidencePreviewPdf(evidenceUploadFiles[0]);
+      });
+    });
+  }
+
+  function updateEvidenceSourceInfo() {
     if (evidenceSourceFileName) {
-      evidenceSourceFileName.textContent = pdfs.length === 1
-        ? pdfs[0].name
-        : `${pdfs.length}件のPDFを処理します`;
+      evidenceSourceFileName.textContent = evidenceUploadFiles.length === 1
+        ? evidenceUploadFiles[0].name
+        : evidenceUploadFiles.length + '\u4ef6\u306ePDF\u3092\u51e6\u7406\u3057\u307e\u3059';
     }
     if (evidenceFileCountBadge) {
-      evidenceFileCountBadge.textContent = pdfs.length > 1 ? `${pdfs.length}件` : '証拠番号モード';
+      evidenceFileCountBadge.textContent = evidenceUploadFiles.length > 1
+        ? evidenceUploadFiles.length + '\u4ef6'
+        : '\u8a3c\u62e0\u756a\u53f7\u30e2\u30fc\u30c9';
     }
-    if (evidenceFileListWrap && evidenceFileList) {
-      if (pdfs.length > 1) {
-        evidenceFileList.innerHTML = pdfs.map(f => `<li>${f.name}</li>`).join('');
-        evidenceFileListWrap.style.display = 'block';
-      } else {
-        evidenceFileListWrap.style.display = 'none';
-      }
+    if (evidenceFileListWrap) {
+      evidenceFileListWrap.style.display = evidenceUploadFiles.length > 1 ? 'block' : 'none';
     }
+  }
+
+  function prepareEvidenceFiles(pdfs) {
+    evidenceUploadFiles = Array.from(pdfs);
+    evidenceMergeMode = false;
+    // デフォルト位置リセット
+    stampPosRatioX = 0.85;
+    stampPosRatioY = 0.03;
+    updateEvidenceSourceInfo();
+    renderEvidenceFileList();
     updateEvidencePreview();
+    // 1ページ目をプレビュー
+    renderEvidencePreviewPdf(evidenceUploadFiles[0]);
     setState('evidence-confirm');
   }
 
+  // 結合ボタン
+  if (btnEvidenceMerge) {
+    btnEvidenceMerge.addEventListener('click', function() {
+      evidenceMergeMode = !evidenceMergeMode;
+      btnEvidenceMerge.classList.toggle('active', evidenceMergeMode);
+      btnEvidenceMerge.style.background = evidenceMergeMode ? '#fef2f2' : '';
+      btnEvidenceMerge.style.color = evidenceMergeMode ? '#dc2626' : '';
+      updateEvidenceFileListLabels();
+    });
+  }
+
+  // ファイル追加ボタン
+  if (btnEvidenceAddFiles) {
+    btnEvidenceAddFiles.addEventListener('click', function() {
+      var input = document.createElement('input');
+      input.type = 'file';
+      input.accept = '.pdf';
+      input.multiple = true;
+      input.addEventListener('change', function() {
+        if (input.files && input.files.length > 0) {
+          for (var i = 0; i < input.files.length; i++) {
+            evidenceUploadFiles.push(input.files[i]);
+          }
+          updateEvidenceSourceInfo();
+          renderEvidenceFileList();
+        }
+      });
+      input.click();
+    });
+  }
+
   if (btnEvidenceBack) {
-    btnEvidenceBack.addEventListener('click', () => {
+    btnEvidenceBack.addEventListener('click', function() {
       evidenceUploadFiles = [];
+      evidenceMergeMode = false;
+      showPreviewPlaceholder();
       setState('upload');
     });
   }
 
   if (btnEvidenceGenerate) {
-    btnEvidenceGenerate.addEventListener('click', async () => {
+    btnEvidenceGenerate.addEventListener('click', async function() {
       if (!evidenceUploadFiles || evidenceUploadFiles.length === 0) {
-        showError('ファイルが選択されていません。');
+        showError('\u30d5\u30a1\u30a4\u30eb\u304c\u9078\u629e\u3055\u308c\u3066\u3044\u307e\u305b\u3093\u3002');
         setState('upload');
         return;
       }
-      const party = evidencePartySelect ? evidencePartySelect.value : '甲';
-      const numStr = evidenceNumberInput ? evidenceNumberInput.value.trim() : '';
+      var party = getEvidenceParty();
+      var numStr = evidenceNumberInput ? evidenceNumberInput.value.trim() : '';
       if (!numStr) {
-        showError('証拠番号を入力してください。');
+        showError('\u8a3c\u62e0\u756a\u53f7\u3092\u5165\u529b\u3057\u3066\u304f\u3060\u3055\u3044\u3002');
         return;
       }
-      const startNum = parseInt(numStr, 10);
+      var startNum = parseInt(numStr, 10);
       if (isNaN(startNum) || startNum < 1) {
-        showError('証拠番号は1以上の数字を入力してください。');
+        showError('\u8a3c\u62e0\u756a\u53f7\u306f1\u4ee5\u4e0a\u306e\u6570\u5b57\u3092\u5165\u529b\u3057\u3066\u304f\u3060\u3055\u3044\u3002');
         return;
       }
-      const subNumStr = evidenceSubNumInput ? evidenceSubNumInput.value.trim() : '';
-      const subNum = subNumStr ? parseInt(subNumStr, 10) : null;
-      const useDai = evidenceUseDai ? evidenceUseDai.checked : false;
-      const titleStr = evidenceTitleInput ? evidenceTitleInput.value.trim() : '';
-      const allPages = evidenceAllPages ? evidenceAllPages.checked : false;
-      const outputSheet = evidenceOutputSheet ? evidenceOutputSheet.checked : false;
-      const originalCopy = evidenceOriginalCopy ? evidenceOriginalCopy.value : '';
-      const createdDate = evidenceCreatedDate ? evidenceCreatedDate.value.trim() : '';
-      const author = evidenceAuthor ? evidenceAuthor.value.trim() : '';
-      const purpose = evidencePurpose ? evidencePurpose.value.trim() : '';
+      var subNumStr = evidenceSubNumInput ? evidenceSubNumInput.value.trim() : '';
+      var subNum = subNumStr ? parseInt(subNumStr, 10) : null;
+      var useDai = evidenceUseDai ? evidenceUseDai.checked : false;
+      var titleStr = evidenceTitleInput ? evidenceTitleInput.value.trim() : '';
+      var allPages = evidenceAllPages ? evidenceAllPages.checked : false;
+      var addPageNum = evidenceAddPageNum ? evidenceAddPageNum.checked : false;
+      var useMintsName = evidenceMintsName ? evidenceMintsName.checked : false;
+      var outputSheet = evidenceOutputSheet ? evidenceOutputSheet.checked : false;
+      var originalCopy = evidenceOriginalCopy ? evidenceOriginalCopy.value : '';
+      var createdDate = evidenceCreatedDate ? evidenceCreatedDate.value.trim() : '';
+      var author = evidenceAuthor ? evidenceAuthor.value.trim() : '';
+      var purpose = evidencePurpose ? evidencePurpose.value.trim() : '';
 
-      const files = evidenceUploadFiles;
-      const total = files.length;
+      // スタンプ位置: ドラッグ結果のratioからPDF座標(pt)に変換
+      var stampOpts = {
+        stampSize: evidenceStampSize ? evidenceStampSize.value : '20',
+        stampColor: evidenceStampColor ? evidenceStampColor.value : 'red',
+        stampBg: evidenceStampBg ? evidenceStampBg.checked : true,
+        stampBorder: evidenceStampBorder ? evidenceStampBorder.checked : false,
+        addPageNum: addPageNum,
+        // カスタム位置 (PDF座標系)
+        customX: stampPosRatioX,
+        customY: stampPosRatioY,
+      };
+
+      var files = evidenceUploadFiles;
+      var total = files.length;
 
       setState('processing');
       startProcessingSteps('generate');
-      const results = [];
-      const sheetEntries = [];
+      var results = [];
+      var sheetEntries = [];
 
-      for (let i = 0; i < total; i++) {
-        const currentNum = startNum + i;
-        const currentSub = (total === 1 && subNum) ? subNum : (total > 1 ? null : subNum);
-        const evidenceLabel = buildEvidenceLabel(party, currentNum, currentSub, useDai);
-        processingTitle.textContent = total > 1
-          ? `証拠番号を書き込み中... (${i + 1}/${total})`
-          : '証拠番号を書き込み中...';
-        processingMessage.textContent = `${files[i].name} → ${evidenceLabel}`;
-
+      // 結合モード
+      if (evidenceMergeMode && total > 1) {
         try {
-          const result = await generateEvidenceBrowser(files[i], {
-            evidenceLabel, evidenceTitle: titleStr, allPages, onProgress: updateProgress,
-          });
-          const blobUrl = URL.createObjectURL(result.blob);
-          results.push({ fileName: result.fileName, downloadUrl: blobUrl, error: null });
+          processingTitle.textContent = 'PDF\u3092\u7d50\u5408\u4e2d...';
+          var mergedFile = await mergePdfs(files, updateProgress);
+          var subRange = '1~' + total;
+          var evidenceLabel = buildEvidenceLabel(party, startNum, null, useDai);
+          processingTitle.textContent = '\u8a3c\u62e0\u756a\u53f7\u3092\u66f8\u304d\u8fbc\u307f\u4e2d...';
+          processingMessage.textContent = evidenceLabel;
+
+          var result = await generateEvidenceBrowser(mergedFile, Object.assign({
+            evidenceLabel: evidenceLabel, evidenceTitle: titleStr, allPages: allPages, onProgress: updateProgress,
+          }, stampOpts));
+
+          var outName = useMintsName
+            ? buildMintsFileName(party, startNum, null, titleStr, subRange)
+            : result.fileName;
+          var blobUrl = URL.createObjectURL(result.blob);
+          results.push({ fileName: outName, downloadUrl: blobUrl, error: null });
           sheetEntries.push({
-            label: evidenceLabel,
-            title: titleStr,
-            originalOrCopy: originalCopy,
-            createdDate: createdDate,
-            author: author,
-            purpose: purpose,
+            label: evidenceLabel + '\u306e\uff11\uff5e' + toFullWidthNumber(String(total)),
+            title: titleStr, originalOrCopy: originalCopy,
+            createdDate: createdDate, author: author, purpose: purpose,
           });
         } catch (err) {
-          results.push({ fileName: files[i].name, downloadUrl: null, error: err.message || '生成失敗' });
+          results.push({ fileName: '\u7d50\u5408\u30d5\u30a1\u30a4\u30eb', downloadUrl: null, error: err.message || '\u7d50\u5408\u5931\u6557' });
+        }
+      } else {
+        for (var i = 0; i < total; i++) {
+          var currentNum = startNum + i;
+          var currentSub = (total === 1 && subNum) ? subNum : null;
+          var evidenceLabel = buildEvidenceLabel(party, currentNum, currentSub, useDai);
+          processingTitle.textContent = total > 1
+            ? '\u8a3c\u62e0\u756a\u53f7\u3092\u66f8\u304d\u8fbc\u307f\u4e2d... (' + (i + 1) + '/' + total + ')'
+            : '\u8a3c\u62e0\u756a\u53f7\u3092\u66f8\u304d\u8fbc\u307f\u4e2d...';
+          processingMessage.textContent = files[i].name + ' \u2192 ' + evidenceLabel;
+
+          try {
+            var result = await generateEvidenceBrowser(files[i], Object.assign({
+              evidenceLabel: evidenceLabel, evidenceTitle: titleStr, allPages: allPages, onProgress: updateProgress,
+            }, stampOpts));
+
+            var outName = useMintsName
+              ? buildMintsFileName(party, currentNum, currentSub, titleStr, null)
+              : result.fileName;
+            var blobUrl = URL.createObjectURL(result.blob);
+            results.push({ fileName: outName, downloadUrl: blobUrl, error: null });
+            sheetEntries.push({
+              label: evidenceLabel, title: titleStr, originalOrCopy: originalCopy,
+              createdDate: createdDate, author: author, purpose: purpose,
+            });
+          } catch (err) {
+            results.push({ fileName: files[i].name, downloadUrl: null, error: err.message || '\u751f\u6210\u5931\u6557' });
+          }
         }
       }
 
-      // 証拠説明書（Word）の生成
+      // 証拠説明書
       if (outputSheet && sheetEntries.length > 0) {
         try {
-          const sheetBlob = await generateEvidenceSheetDocx(sheetEntries, { party });
-          const sheetUrl = URL.createObjectURL(sheetBlob);
+          var sheetBlob = await generateEvidenceSheetDocx(sheetEntries, { party: party });
+          var sheetUrl = URL.createObjectURL(sheetBlob);
           results.push({
-            fileName: `証拠説明書_${party}号証.docx`,
-            downloadUrl: sheetUrl,
-            error: null,
-            isSheet: true,
+            fileName: '\u8a3c\u62e0\u8aac\u660e\u66f8_' + party + '\u53f7\u8a3c.docx',
+            downloadUrl: sheetUrl, error: null, isSheet: true,
           });
         } catch (sheetErr) {
-          console.error('証拠説明書の生成に失敗:', sheetErr);
+          console.error('\u8a3c\u62e0\u8aac\u660e\u66f8\u306e\u751f\u6210\u306b\u5931\u6557:', sheetErr);
         }
       }
 
       resetProcessingSteps();
-      [procStep1, procStep2, procStep3].forEach(step => { if (step) step.classList.add('done'); });
-      const succeeded = results.filter(r => !r.error);
-      const failed = results.filter(r => r.error);
-      const pdfCount = succeeded.filter(r => !r.isSheet).length;
+      [procStep1, procStep2, procStep3].forEach(function(step) { if (step) step.classList.add('done'); });
+      var succeeded = results.filter(function(r) { return !r.error; });
+      var failed = results.filter(function(r) { return r.error; });
+      var pdfCount = succeeded.filter(function(r) { return !r.isSheet; }).length;
       completeTitle.textContent = total === 1
-        ? '証拠番号の書き込みが完了しました'
-        : `証拠番号の書き込みが完了しました（${pdfCount}/${total}件）`;
+        ? '\u8a3c\u62e0\u756a\u53f7\u306e\u66f8\u304d\u8fbc\u307f\u304c\u5b8c\u4e86\u3057\u307e\u3057\u305f'
+        : '\u8a3c\u62e0\u756a\u53f7\u306e\u66f8\u304d\u8fbc\u307f\u304c\u5b8c\u4e86\u3057\u307e\u3057\u305f\uff08' + pdfCount + '/' + total + '\u4ef6\uff09';
       outputFileName.textContent = '';
 
       if (succeeded.length === 1 && !outputSheet) {
         singleDownloadArea.style.display = '';
         multiDownloadArea.style.display = 'none';
-        downloadLabel.textContent = 'PDFファイルをダウンロード';
+        downloadLabel.textContent = 'PDF\u30d5\u30a1\u30a4\u30eb\u3092\u30c0\u30a6\u30f3\u30ed\u30fc\u30c9';
         btnDownload.href = succeeded[0].downloadUrl;
         btnDownload.download = succeeded[0].fileName;
       } else {
         singleDownloadArea.style.display = 'none';
         multiDownloadArea.style.display = '';
-        downloadList.innerHTML = results.map(r => {
+        downloadList.innerHTML = results.map(function(r) {
           if (r.error) {
-            return `<li style="display:flex;align-items:center;gap:8px;padding:8px 12px;background:#fef2f2;border-radius:8px;color:#dc2626;">
-              <span style="flex:1;font-size:0.85em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${r.fileName}</span>
-              <span style="font-size:0.8em;color:#dc2626;">失敗: ${r.error}</span>
-            </li>`;
+            return '<li style="display:flex;align-items:center;gap:8px;padding:8px 12px;background:#fef2f2;border-radius:8px;color:#dc2626;">' +
+              '<span style="flex:1;font-size:0.85em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + r.fileName + '</span>' +
+              '<span style="font-size:0.8em;color:#dc2626;">\u5931\u6557: ' + r.error + '</span></li>';
           }
-          const bgColor = r.isSheet ? '#eff6ff' : '#f0fdf4';
-          const icon = r.isSheet ? '📋' : '📄';
-          return `<li style="display:flex;align-items:center;gap:8px;padding:8px 12px;background:${bgColor};border-radius:8px;">
-            <span style="font-size:1.1em;">${icon}</span>
-            <span style="flex:1;font-size:0.85em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text-primary);">${r.fileName}</span>
-            <a href="${r.downloadUrl}" download="${r.fileName}" class="btn btn-primary" style="padding:6px 14px;font-size:0.82em;white-space:nowrap;">
-              ダウンロード
-            </a>
-          </li>`;
+          var bgColor = r.isSheet ? '#eff6ff' : '#f0fdf4';
+          return '<li style="display:flex;align-items:center;gap:8px;padding:8px 12px;background:' + bgColor + ';border-radius:8px;">' +
+            '<span style="flex:1;font-size:0.85em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text-primary);">' + r.fileName + '</span>' +
+            '<a href="' + r.downloadUrl + '" download="' + r.fileName + '" class="btn btn-primary" style="padding:6px 14px;font-size:0.82em;white-space:nowrap;">\u30c0\u30a6\u30f3\u30ed\u30fc\u30c9</a></li>';
         }).join('');
       }
 
       if (failed.length > 0) {
-        showError(`${failed.length}件の生成に失敗しました: ${failed.map(r=>r.fileName).join(', ')}`);
+        showError(failed.length + '\u4ef6\u306e\u751f\u6210\u306b\u5931\u6557\u3057\u307e\u3057\u305f: ' + failed.map(function(r) { return r.fileName; }).join(', '));
       }
       setState('complete');
       if (pdfCount > 0) setTimeout(launchConfetti, 300);
     });
   }
+
 
   // --- 設定モーダル ---
   if (settingsBtn && settingsModal) {
