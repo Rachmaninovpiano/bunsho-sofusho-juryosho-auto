@@ -1295,8 +1295,8 @@
   }
 
   /**
-   * PDFの指定ページに証拠番号と標目をスタンプ。
-   * カスタマイズ可能: 位置, サイズ, 色, 背景, 枠線, ページ番号
+   * PDFの指定ページに証拠番号をスタンプ（太字）。
+   * 書誌情報（標目）はPDFには打ち込まない（証拠説明書のみ）。
    */
   async function generateEvidenceBrowser(file, opts) {
     const {
@@ -1317,7 +1317,6 @@
     const font = await pdfDoc.embedFont(fontBytes, { subset: false });
 
     const labelFontSize = parseInt(stampSize, 10) || 20;
-    const titleFontSize = Math.max(10, Math.round(labelFontSize * 0.6));
     const color = getStampColor(stampColor);
     const { rgb } = PDFLib;
 
@@ -1326,30 +1325,35 @@
       ? Array.from({ length: pageCount }, (_, i) => i)
       : [0];
 
+    // 太字化: テキストを微小オフセットで複数回描画
+    function drawBoldText(page, text, x, y, size, font, color) {
+      var offsets = [
+        [0, 0], [0.4, 0], [-0.4, 0], [0, 0.4], [0, -0.4],
+        [0.2, 0.2], [-0.2, 0.2], [0.2, -0.2], [-0.2, -0.2]
+      ];
+      for (var k = 0; k < offsets.length; k++) {
+        page.drawText(text, {
+          x: x + offsets[k][0], y: y + offsets[k][1],
+          size: size, font: font, color: color,
+        });
+      }
+    }
+
     onProgress && onProgress('証拠番号を書き込み中...');
     for (const pageIndex of pagesToStamp) {
       const page = pdfDoc.getPage(pageIndex);
       const { width: pgW, height: pgH } = page.getSize();
 
-      // ラベルテキストのサイズ計算
+      // ラベルテキストのサイズ計算（証拠番号のみ、書誌情報は入れない）
       const labelWidth = font.widthOfTextAtSize(evidenceLabel, labelFontSize);
-      let titleText = '';
-      let titleWidth = 0;
-      if (evidenceTitle && evidenceTitle.trim()) {
-        titleText = '\uff08' + evidenceTitle.trim() + '\uff09';
-        titleWidth = font.widthOfTextAtSize(titleText, titleFontSize);
-      }
       const boxPadH = 8;
       const boxPadV = 6;
-      const boxWidth = Math.max(labelWidth, titleWidth) + boxPadH * 2;
-      const boxHeight = labelFontSize + (titleText ? titleFontSize + 6 : 0) + boxPadV * 2;
+      const boxWidth = labelWidth + boxPadH * 2;
+      const boxHeight = labelFontSize + boxPadV * 2;
 
-      // 位置計算: ドラッグで指定された比率(customX/customY)からPDF座標に変換
-      // customX: スタンプ中心のX比率(0~1), customY: スタンプ上端のY比率(0~1, 上が0)
-      // PDF座標系は左下原点なので変換が必要
+      // 位置計算
       let boxX = customX * pgW - boxWidth / 2;
       let boxY = pgH - (customY * pgH) - boxHeight;
-      // はみ出し防止
       boxX = Math.max(2, Math.min(pgW - boxWidth - 2, boxX));
       boxY = Math.max(2, Math.min(pgH - boxHeight - 2, boxY));
 
@@ -1372,26 +1376,10 @@
         });
       }
 
-      // 証拠番号ラベル
+      // 証拠番号ラベル（太字描画）
       const labelX = boxX + (boxWidth - labelWidth) / 2;
-      const labelY = titleText
-        ? boxY + titleFontSize + 6 + boxPadV
-        : boxY + boxPadV;
-
-      page.drawText(evidenceLabel, {
-        x: labelX, y: labelY,
-        size: labelFontSize, font, color,
-      });
-
-      // 標目
-      if (titleText) {
-        const titleX = boxX + (boxWidth - titleWidth) / 2;
-        const titleY = boxY + boxPadV;
-        page.drawText(titleText, {
-          x: titleX, y: titleY,
-          size: titleFontSize, font, color,
-        });
-      }
+      const labelY = boxY + boxPadV;
+      drawBoldText(page, evidenceLabel, labelX, labelY, labelFontSize, font, color);
     }
 
     // ページ番号付与
@@ -1413,8 +1401,12 @@
 
     const savedBytes = await pdfDoc.save();
     const blob = new Blob([savedBytes], { type: 'application/pdf' });
-    const baseName = file.name.replace(/\.pdf$/i, '');
-    const fileName = baseName + '_' + evidenceLabel + '.pdf';
+    // ファイル名: 甲○号証.pdf or 甲○号証（△△）.pdf
+    let fileName = evidenceLabel;
+    if (evidenceTitle && evidenceTitle.trim()) {
+      fileName += '\uff08' + evidenceTitle.trim() + '\uff09';
+    }
+    fileName += '.pdf';
     return { blob, fileName, pageCount };
   }
 
@@ -2560,10 +2552,9 @@
     var label = getEvidencePreviewLabel();
     var title = evidenceTitleInput ? evidenceTitleInput.value.trim() : '';
 
-    // スタンプテキスト更新
+    // スタンプテキスト更新（証拠番号のみ、書誌情報はPDFに打ち込まない）
     if (evidenceStampPreview) {
       var text = label;
-      if (title) text += '\n\uff08' + title + '\uff09';
       evidenceStampPreview.textContent = text;
 
       // 色
